@@ -7,3 +7,6 @@ matplotlib>=3.8.0
 # timesfm[mlx]. PyTorch (timesfm[torch]) also works — the script tries MLX
 # first, then PyTorch.
 timesfm[mlx] @ git+https://github.com/google-research/timesfm.git@e51928e27119cb17bebc005be2696b75e0a9e688
+
+# Tests
+pytest>=8.0

@@ -50,7 +50,8 @@ from forecast_dublin_airport import (
     forecast_univariate,
     load_forecaster,
 )
-from forecast_markets import PERSONAS, TERMINAL_MARKETS, build_market_dataset, school_holiday
+from forecast_markets import MARKETS, PERSONAS, TERMINAL_MARKETS, build_market_dataset, school_holiday
+from real_data import daily_interp, market_targets
 
 # --- Direction -------------------------------------------------------------
 # Day one of these events is inbound (fewer departures), day two outbound.
@@ -162,13 +163,16 @@ def build_direction_dataset(frame: pd.DataFrame, markets: pd.DataFrame, seed: in
             first3[t] = not all(holiday[max(0, t - 3):t]) if t >= 3 else True
             last3[t] = not all(holiday[t + 1:t + 4]) if t + 4 <= len(dates) else False
     direction = event_direction_series(frame)
+    targets = market_targets()
+    real_dep = {m: daily_interp(pd.DatetimeIndex(frame["date"]), targets[f"dep_share_{m}"]) for m in MARKETS}
 
     rows = []
     for terminal, names_m in TERMINAL_MARKETS.items():
         sub = markets[markets["terminal"] == terminal]
         for market in names_m:
             part = sub[sub["market"] == market].reset_index(drop=True)
-            share = 0.5 + ar_noise(rng, len(part), 0.01, 0.5)
+            # Baseline from the CSO's monthly departing share for this market.
+            share = real_dep[market] + ar_noise(rng, len(part), 0.01, 0.5)
             leisure_market = market in ("eu_sun", "uk")
             share += np.where((dow == 4) & leisure_market, 0.03, 0.0)
             share += np.where(dow == 6, -0.03, 0.0)

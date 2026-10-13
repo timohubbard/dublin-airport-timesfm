@@ -39,12 +39,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from real_data import market_targets, monthly_factor
+
 from forecast_dublin_airport import (
     HORIZON_DAYS,
     ROOT,
     SEED,
     build_dataset,
-    easter_sunday,
+    school_holiday,
     forecast_multivariate,
     forecast_univariate,
     load_forecaster,
@@ -99,24 +101,20 @@ BASE_MIX = {
 PRM_SHARE = 0.012
 
 
-def school_holiday(day: date) -> bool:
-    """Irish school breaks, approximately: Easter fortnight, summer, mid-terms, Christmas."""
-    easter = easter_sunday(day.year)
-    if easter - timedelta(days=9) <= day <= easter + timedelta(days=7):
-        return True
-    if date(day.year, 6, 28) <= day <= date(day.year, 8, 31):
-        return True
-    if day.month == 10 and day.day >= 26 or day.month == 11 and day.day <= 2:
-        return True
-    if day.month == 2 and 12 <= day.day <= 18:
-        return True
-    return (day.month == 12 and day.day >= 21) or (day.month == 1 and day.day <= 5)
-
-
 def build_market_dataset(frame: pd.DataFrame, seed: int = SEED) -> pd.DataFrame:
-    """Long table: one row per date, terminal and market."""
+    """Long table: one row per date, terminal and market.
+
+    Shares follow the season, weekday, school holidays and events, with AR(1)
+    noise. They are then calibrated so each market's monthly passengers match
+    the CSO's country breakdown for Dublin (real_data.market_targets).
+
+    The market schedule (scheduled_movements) is built from the *expected*
+    share only, before noise: airlines publish it weeks ahead, so it cannot
+    know how the share will actually turn out.
+    """
     rng = np.random.default_rng(seed + 101)
     dates = frame["date"].dt.date.to_numpy()
+    index = pd.DatetimeIndex(frame["date"])
     n = len(frame)
     doy = frame["date"].dt.dayofyear.to_numpy()
     dow = frame["date"].dt.dayofweek.to_numpy()
@@ -125,34 +123,47 @@ def build_market_dataset(frame: pd.DataFrame, seed: int = SEED) -> pd.DataFrame:
     weekend = np.isin(dow, (4, 5, 6))
     weekday = np.isin(dow, (0, 1, 2, 3))
     events = frame["event_name"].fillna("").to_numpy()
+    targets = market_targets()
 
     rows = []
     for terminal, markets in TERMINAL_MARKETS.items():
         pax_col, mov_col = TERMINAL_COLUMNS[terminal]
         total_pax = frame[pax_col].to_numpy()
         total_mov = frame[mov_col].to_numpy()
-        log_w = np.zeros((len(markets), n))
+        expected = np.zeros((len(markets), n))
+        noise = np.zeros((len(markets), n))
         for i, market in enumerate(markets):
-            noise = np.zeros(n)
             shocks = rng.normal(0.0, 0.025, size=n)
             for t in range(1, n):
-                noise[t] = 0.7 * noise[t - 1] + shocks[t]
-            log_w[i] = np.log(BASE_SHARE[terminal][market]) + SEASONAL_AMPLITUDE[market] * season + noise
+                noise[i, t] = 0.7 * noise[i, t - 1] + shocks[t]
+            expected[i] = np.log(BASE_SHARE[terminal][market]) + SEASONAL_AMPLITUDE[market] * season
             if market == "eu_sun":
-                log_w[i] += 0.12 * weekend + 0.15 * holiday
+                expected[i] += 0.12 * weekend + 0.15 * holiday
             if market in ("uk", "eu_city"):
-                log_w[i] += 0.09 * weekday
+                expected[i] += 0.09 * weekday
             if market in ("na", "long"):
-                log_w[i] += 0.06 * holiday
+                expected[i] += 0.06 * holiday
             for t, name in enumerate(events):
-                log_w[i, t] += EVENT_LIFT.get(name, {}).get(market, 0.0)
-        share = np.exp(log_w)
-        share /= share.sum(axis=0, keepdims=True)
+                expected[i, t] += EVENT_LIFT.get(name, {}).get(market, 0.0)
+
+        def normalise(log_w: np.ndarray) -> np.ndarray:
+            w = np.exp(log_w - log_w.max(axis=0, keepdims=True))
+            return w / w.sum(axis=0, keepdims=True)
+
+        # Calibrate to CSO monthly market totals: a smooth log-offset per market.
+        offset = np.zeros((len(markets), n))
+        for _ in range(4):
+            share = normalise(expected + offset + noise)
+            for i, market in enumerate(markets):
+                factor = monthly_factor(index, share[i] * total_pax, targets[f"{terminal}_{market}"], iterations=2)
+                offset[i] += np.log(np.clip(factor, 0.2, 5.0))
+        share = normalise(expected + offset + noise)
+        planned_share = normalise(expected + offset)
 
         pax = np.floor(share * total_pax).astype(np.int64)
         pax[-1] += total_pax - pax.sum(axis=0)
         seats = np.array([SEAT_FACTOR[m] for m in markets])[:, None]
-        mov_share = (share / seats) / (share / seats).sum(axis=0, keepdims=True)
+        mov_share = (planned_share / seats) / (planned_share / seats).sum(axis=0, keepdims=True)
         movements = np.maximum(1, np.rint(mov_share * total_mov)).astype(np.int64)
 
         for i, market in enumerate(markets):

@@ -1,0 +1,321 @@
+"""Rolling-origin backtest: how good are these forecasts, really?
+
+One forecast origin tells you very little: 28 days, a handful of events.
+This script re-runs every forecast from 52 weekly origins (March 2025 to
+January 2026), each seeing only the data before it and the covariates that
+would genuinely have been known, and scores them 1-28 days ahead against:
+
+  four classical baselines   seasonal naive (last week, last year),
+                             Holt-Winters, the planner's schedule x load method
+  TimesFM, three ways        history only, jointly, jointly with covariates
+
+The origins are split in time. The first 26 calibrate the uncertainty bands
+(split conformal, calibration.py) and the hierarchy weights (MinT,
+reconcile.py); the last 26 are scored as unseen. Differences between models
+carry 95% intervals from a bootstrap over origins, so a slice with few
+events is visibly uncertain rather than quietly over-claimed.
+
+    python forecast_eval.py            # full backtest (about 4 minutes, cached after)
+    python forecast_eval.py --weeks 12 # quicker
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+
+import numpy as np
+import pandas as pd
+
+import baselines as bl
+import calibration as cal
+import metrics as mx
+from forecast_dublin_airport import HORIZON_DAYS, ROOT
+from pipeline import Data, Engine, backtest_origins, build_data, families, run_models
+from reconcile import hierarchy, mint_projection, reconcile, shrunk_covariance
+
+OUT = ROOT / "outputs"
+TFM_MODELS = ("univariate", "joint", "covariates")
+MODEL_LABELS = {
+    "covariates": "TimesFM 3 + schedule & events",
+    "joint": "TimesFM 3, joint, no covariates",
+    "univariate": "TimesFM 3, history only",
+    **bl.BASELINE_LABELS,
+}
+FAMILY_LABELS = {
+    "terminals": "Terminal passengers",
+    "markets_t1": "T1 by market",
+    "markets_t2": "T2 by market",
+    "directions_t1": "T1 arrivals/departures",
+    "directions_t2": "T2 arrivals/departures",
+    "landside": "Taxis, buses, car park",
+}
+
+
+def series_name(key: tuple) -> str:
+    return "/".join(key)
+
+
+def run_backtest(data: Data, engine: Engine, origins: list[int]) -> pd.DataFrame:
+    fams = families(data)
+    f = data.frame
+    event = f["event_intensity"].to_numpy() > 0
+    disruption = f["disruption_name"].fillna("").ne("").to_numpy()
+    dates = f["date"].to_numpy()
+    h = engine.horizon
+    hw_params: dict[tuple, dict] = {}
+    cols: dict[str, list] = {k: [] for k in ("origin", "t", "h", "family", "series", "model", "actual", "point", "scale")}
+    qcols: list[np.ndarray] = []
+    nan_q = np.full((h, 9), np.nan)
+    t0 = time.perf_counter()
+    for oi, origin in enumerate(origins):
+        steps = np.arange(origin, origin + h)
+        for fam in fams:
+            tfm = run_models(engine, fam, origin)
+            for i, key in enumerate(fam.keys):
+                y = fam.y[i].astype(float)
+                hist = y[:origin]
+                scale = mx.snaive_scale(hist[-365:])
+                name = series_name(key)
+                preds = {m: (tfm[m][0][i], tfm[m][1][i]) for m in TFM_MODELS}
+                pkey = (fam.name, name)
+                if pkey not in hw_params or oi % 13 == 0:
+                    hw_params[pkey] = bl.hw_fit(hist)
+                preds["snaive7"] = (bl.snaive7(hist, h), nan_q)
+                preds["snaive364"] = (bl.snaive364(hist, h), nan_q)
+                preds["holt_winters"] = (bl.holt_winters(hist, h, hw_params[pkey]), nan_q)
+                preds["schedule"] = (bl.schedule_ratio(hist, fam.primary[i][: origin + h], h), nan_q)
+                for model, (point, q) in preds.items():
+                    cols["origin"].extend([origin] * h)
+                    cols["t"].extend(steps)
+                    cols["h"].extend(range(h))
+                    cols["family"].extend([fam.name] * h)
+                    cols["series"].extend([name] * h)
+                    cols["model"].extend([model] * h)
+                    cols["actual"].extend(y[steps])
+                    cols["point"].extend(np.asarray(point, float)[:h])
+                    cols["scale"].extend([scale] * h)
+                    qcols.append(np.asarray(q, float)[:h])
+        if oi % 8 == 0 or oi == len(origins) - 1:
+            print(f"  origin {oi + 1}/{len(origins)} ({pd.Timestamp(dates[origin]):%d %b %Y})  {engine.report()}  {time.perf_counter() - t0:.0f}s")
+    out = pd.DataFrame(cols)
+    q = np.concatenate(qcols)
+    for j, level in enumerate(cal.MODEL_LEVELS):
+        out[f"q{int(level * 100):02d}"] = q[:, j]
+    out["date"] = pd.to_datetime(dates[out["t"].to_numpy()])
+    out["event"] = event[out["t"].to_numpy()]
+    out["disruption"] = disruption[out["t"].to_numpy()]
+    return out
+
+
+QCOLS = [f"q{int(l * 100):02d}" for l in cal.MODEL_LEVELS]
+CAL_COLS = [f"c{int(round(l * 100)):02d}" for l in cal.LEVELS]
+
+
+def calibrate(bt: pd.DataFrame, calib_origins: set[int]) -> tuple[pd.DataFrame, dict]:
+    """Fit conformal shifts per (family, series, model) on the calibration
+    origins; apply them to every row. Returns the frame and the shifts."""
+    shifts = {}
+    parts = []
+    for (fam, series, model), g in bt[bt["model"].isin(TFM_MODELS)].groupby(["family", "series", "model"], sort=False):
+        fit_rows = g[g["origin"].isin(calib_origins)]
+        s = cal.fit(fit_rows["actual"], fit_rows[QCOLS].to_numpy(), fit_rows["h"], fit_rows["event"])
+        shifts[(fam, series, model)] = s
+        cq = cal.apply(g[QCOLS].to_numpy(), g["h"].to_numpy(), s, g["event"].to_numpy())
+        parts.append(pd.DataFrame(cq, index=g.index, columns=CAL_COLS))
+    calq = pd.concat(parts)
+    return bt.join(calq), shifts
+
+
+SLICES = {
+    "all": lambda d: np.ones(len(d), bool),
+    "ordinary": lambda d: ~(d["event"] | d["disruption"]).to_numpy(),
+    "event": lambda d: d["event"].to_numpy(),
+    "disruption": lambda d: d["disruption"].to_numpy(),
+    "week1": lambda d: (d["h"] < 7).to_numpy(),
+    "week4": lambda d: (d["h"] >= 21).to_numpy(),
+}
+
+
+def leaderboard(test: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for fam, gf in test.groupby("family", sort=False):
+        for sl, fn in SLICES.items():
+            part = gf[fn(gf)]
+            if part.empty:
+                continue
+            for model, g in part.groupby("model", sort=False):
+                row = {
+                    "family": fam, "slice": sl, "model": model,
+                    "wape": mx.wape(g["actual"], g["point"]),
+                    "mase": mx.mase(g["actual"], g["point"], g["scale"]),
+                    "bias": mx.bias(g["actual"], g["point"]),
+                    "n_days": int(g["t"].nunique()), "n": len(g),
+                }
+                if model in TFM_MODELS:
+                    q = g[QCOLS].to_numpy()
+                    row["wql"] = mx.wql(g["actual"], q)
+                    row["cov80_raw"] = mx.coverage(g["actual"], g["q10"], g["q90"])
+                    row["cov80"] = mx.coverage(g["actual"], g["c10"], g["c90"])
+                    row["cov90"] = mx.coverage(g["actual"], g["c05"], g["c95"])
+                    row["width80"] = mx.rel_width(g["actual"], g["c10"], g["c90"])
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def comparisons(test: pd.DataFrame) -> pd.DataFrame:
+    """WAPE(covariates) - WAPE(other) with bootstrap intervals."""
+    rows = []
+    for fam, gf in test.groupby("family", sort=False):
+        for sl in ("all", "event", "ordinary"):
+            part = gf[SLICES[sl](gf)]
+            ref = part[part["model"] == "covariates"].set_index(["origin", "t", "series"])
+            for other in ("univariate", "joint", *bl.BASELINES):
+                o = part[part["model"] == other].set_index(["origin", "t", "series"]).reindex(ref.index)
+                d, lo, hi = mx.bootstrap_diff(
+                    ref.index.get_level_values("origin"),
+                    ref["point"] - ref["actual"], o["point"] - o["actual"], ref["actual"],
+                )
+                rows.append({"family": fam, "slice": sl, "vs": other, "diff": d, "lo": lo, "hi": hi,
+                             "n_days": int(ref.index.get_level_values("t").nunique())})
+    return pd.DataFrame(rows)
+
+
+def node_matrix(bt: pd.DataFrame, model: str, value: str = "point") -> tuple[pd.DataFrame, list]:
+    """Pivot terminal, market and direction forecasts into hierarchy order."""
+    nodes, _, _ = hierarchy()
+    fam_for = lambda n: "terminals" if len(n) == 1 else (f"markets_{n[0]}" if len(n) == 2 else f"directions_{n[0]}")
+    names = [(fam_for(n), n[0] if len(n) == 1 else "/".join(n)) for n in nodes]
+    sub = bt[bt["model"] == model]
+    sub = sub[sub["family"].isin({a for a, _ in names})]
+    wide = sub.pivot_table(index=["origin", "t", "h"], columns=["family", "series"], values=value)
+    wide = wide[[pd.MultiIndex.from_tuples(names)[i] for i in range(len(names))]]
+    return wide, nodes
+
+
+def evaluate_reconciliation(bt: pd.DataFrame, calib: set[int]) -> tuple[pd.DataFrame, np.ndarray, float]:
+    _, _, s = hierarchy()
+    rows = []
+    proj = lam = None
+    for model in ("covariates", "univariate"):
+        yhat, nodes = node_matrix(bt, model)
+        y, _ = node_matrix(bt, model, "actual")
+        is_cal = yhat.index.get_level_values("origin").isin(calib)
+        w, lam_m = shrunk_covariance((y.values - yhat.values)[is_cal])
+        p = mint_projection(s, w)
+        if model == "covariates":
+            proj, lam = p, lam_m
+        rec = reconcile(yhat.values, p)
+        test = ~is_cal
+        levels = {"terminal": [i for i, n in enumerate(nodes) if len(n) == 1],
+                  "market": [i for i, n in enumerate(nodes) if len(n) == 2],
+                  "arr/dep": [i for i, n in enumerate(nodes) if len(n) == 3]}
+        for level, idx in levels.items():
+            a = y.values[test][:, idx].ravel()
+            rows.append({"model": model, "level": level,
+                         "wape_base": mx.wape(a, yhat.values[test][:, idx].ravel()),
+                         "wape_mint": mx.wape(a, rec[test][:, idx].ravel())})
+        incoherence = np.abs(yhat.values @ (np.eye(len(nodes)) - p).T)[test]
+        rows.append({"model": model, "level": "incoherence_base_pax", "wape_base": float(incoherence.mean()), "wape_mint": 0.0})
+    return pd.DataFrame(rows), proj, lam
+
+
+def plot_leaderboard(board: pd.DataFrame, comp: pd.DataFrame, path) -> None:
+    import os
+    os.environ.setdefault("MPLCONFIGDIR", str(ROOT / ".mplconfig"))
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    order = ["covariates", "joint", "univariate", "schedule", "holt_winters", "snaive7", "snaive364"]
+    colors = {"covariates": "#1D4ED8", "joint": "#64748B", "univariate": "#C2410C", "schedule": "#0F766E",
+              "holt_winters": "#A16207", "snaive7": "#94A3B8", "snaive364": "#CBD5E1"}
+    fams = list(FAMILY_LABELS)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.8), facecolor="white")
+    for ax, sl, title in ((axes[0], "all", "All days"), (axes[1], "event", "Event days")):
+        x = np.arange(len(fams))
+        width = 0.11
+        for j, model in enumerate(order):
+            vals = [board.query("family == @f and slice == @sl and model == @model")["wape"].mean() * 100 for f in fams]
+            ax.bar(x + (j - 3) * width, vals, width, color=colors[model], label=MODEL_LABELS[model])
+        ax.set_xticks(x, [FAMILY_LABELS[f] for f in fams], rotation=20, ha="right", fontsize=9)
+        ax.set_ylabel("WAPE, % (lower is better)")
+        ax.set_title(f"{title}: 26 unseen weekly origins, 1–28 days ahead", loc="left", fontsize=11)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.yaxis.grid(True, color="#E2E8F0")
+        ax.set_axisbelow(True)
+    axes[0].legend(frameon=False, fontsize=8, ncols=2, loc="upper left")
+    fig.suptitle("Rolling-origin backtest: TimesFM 3 against classical baselines", x=0.06, ha="left", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def plot_calibration(test: pd.DataFrame, path) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    g = test[test["model"] == "covariates"]
+    raw = mx.reliability(g["actual"], g[QCOLS].to_numpy())
+    calq = mx.reliability(g["actual"], g[CAL_COLS].to_numpy(), cal.LEVELS)
+    fig, ax = plt.subplots(figsize=(5.6, 5.2), facecolor="white")
+    ax.plot([0, 1], [0, 1], color="#CBD5E1", lw=1)
+    ax.plot(cal.MODEL_LEVELS, raw, "o-", color="#C2410C", label="TimesFM quantiles as returned")
+    ax.plot(cal.LEVELS, calq, "o-", color="#1D4ED8", label="After split-conformal calibration")
+    ax.set_xlabel("Forecast quantile level")
+    ax.set_ylabel("Share of actuals at or below it")
+    ax.set_title("Are the bands honest? (unseen origins)", loc="left", fontsize=11)
+    ax.legend(frameon=False, fontsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--weeks", type=int, default=52)
+    args = parser.parse_args()
+    data = build_data()
+    engine = Engine()
+    origins = backtest_origins(data, args.weeks)
+    print(f"Backtest: {len(origins)} weekly origins, {pd.Timestamp(data.frame['date'].iloc[origins[0]]):%d %b %Y} "
+          f"to {pd.Timestamp(data.frame['date'].iloc[origins[-1]]):%d %b %Y}, {HORIZON_DAYS} days ahead")
+    bt = run_backtest(data, engine, origins)
+    calib = set(origins[: len(origins) // 2])
+    bt, _ = calibrate(bt, calib)
+    test = bt[~bt["origin"].isin(calib)]
+    board = leaderboard(test)
+    comp = comparisons(test)
+    recon, _, lam = evaluate_reconciliation(bt, calib)
+    OUT.mkdir(exist_ok=True)
+    bt.to_csv(OUT / "backtest.csv.gz", index=False)
+    board.to_csv(OUT / "leaderboard.csv", index=False)
+    comp.to_csv(OUT / "comparisons.csv", index=False)
+    recon.to_csv(OUT / "reconciliation.csv", index=False)
+    plot_leaderboard(board, comp, OUT / "leaderboard.png")
+    plot_calibration(test, OUT / "calibration.png")
+    print(engine.report())
+    print_summary(board, comp, recon, lam)
+
+
+def print_summary(board: pd.DataFrame, comp: pd.DataFrame, recon: pd.DataFrame, lam: float) -> None:
+    pd.set_option("display.width", 160)
+    wide = board[board["slice"].isin(["all", "event"])].pivot_table(index=["family", "slice"], columns="model", values="wape", sort=False) * 100
+    print("\nWAPE % on unseen origins (lower is better):")
+    print(wide.round(2).to_string())
+    cov = board[(board["slice"] == "all") & board["model"].eq("covariates")][["family", "cov80_raw", "cov80", "cov90", "width80", "wql"]]
+    print("\nCovariate model bands (target 80% / 90%):")
+    print(cov.round(3).to_string(index=False))
+    print("\nCovariates minus other model, WAPE points, with 95% bootstrap interval (negative = covariates better):")
+    c = comp[comp["slice"].isin(["all", "event"])].copy()
+    c["txt"] = c.apply(lambda r: f"{r['diff'] * 100:+.2f} [{r['lo'] * 100:+.2f}, {r['hi'] * 100:+.2f}]", axis=1)
+    print(c.pivot_table(index=["family", "slice"], columns="vs", values="txt", aggfunc="first", sort=False).to_string())
+    print(f"\nReconciliation (MinT, shrinkage lambda {lam:.2f}):")
+    print(recon.round(4).to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()

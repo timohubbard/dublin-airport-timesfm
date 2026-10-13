@@ -1,216 +1,163 @@
-"""Export the March 2026 holdout to flow_data.js for the passenger-flow demo.
+"""Export the March 2026 forecast to flow_data.js for the operations twin.
 
-Reads the outputs of forecast_dublin_airport.py and forecast_markets.py and
-writes one record per horizon day: actual passengers, each forecast, the
-10/50/90% quantiles, scheduled movements, the event flag and the average
-departure delay, per terminal and per destination market. The demo
-(index.html) loads the file with a plain <script> tag, so it works when the
-page is opened straight from disk.
+Reads outputs/forecast_bundle.json (forecast_final.py) and the synthetic
+data CSVs, and writes one record per horizon day plus the evaluation,
+explanation and provenance blocks the demo shows. The demo loads the file
+with a plain <script> tag, so it works when the page is opened from disk.
 
-Market forecasts are reconciled to the terminal forecast before they are
-used for the security roster: each market keeps its forecast share, scaled
-to the terminal total of the same model. The raw market forecasts are kept
-alongside for the accuracy table.
+Per terminal, market and arrivals/departures node the day record carries:
 
-Arrivals and departures by market, ground transport, car parks and staff
-come from forecast_operations.py. Each block is skipped when its inputs are
-missing, and the demo falls back to fixed shares.
+  actual                the synthetic outcome the dots follow
+  univariate            TimesFM history only (reconciled): the "History only" plan
+  joint_with_covariates TimesFM with schedule and events (reconciled median)
+  q                     calibrated, reconciled quantiles P5 ... P95 (meta.levels)
+  uq                    the same for the history-only model
+  plan                  {hist, tfm, p90}: what each roster preset plans for
+  why                   Shapley split of the covariate forecast (base + groups)
+  scen                  re-forecast multipliers for the three scenarios
 
-Run forecast_dublin_airport.py, forecast_markets.py and
-forecast_operations.py first, then:
-
-    python flow_demo/export_flow_data.py
+Run python run_all.py (or forecast_eval.py then forecast_final.py) first.
 """
 
 from __future__ import annotations
 
 import csv
 import json
-from datetime import date, datetime, timezone
+import sys
+from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
+sys.path.insert(0, str(ROOT))
+
+from forecast_operations import CAR_PARKS  # noqa: E402  single source of capacities
+
+BUNDLE = ROOT / "outputs" / "forecast_bundle.json"
 DAILY = ROOT / "data" / "dublin_airport_daily.csv"
-FORECAST = ROOT / "outputs" / "forecast.csv"
 MARKET_DATA = ROOT / "data" / "dublin_airport_markets.csv"
-MARKET_FORECAST = ROOT / "outputs" / "market_forecast.csv"
 DIRECTIONS = ROOT / "data" / "dublin_airport_directions.csv"
 LANDSIDE = ROOT / "data" / "dublin_airport_landside.csv"
-OPS_FORECAST = ROOT / "outputs" / "ops_forecast.csv"
-CAR_PARK_CAPACITY = {"hb": 12000, "st_t1": 3000, "st_t2": 2600}
 PERSONAS = ("business", "leisure", "family", "group", "prm")
 OUT = HERE / "flow_data.js"
-
-TERMINALS = {"terminal_1_passengers": "t1", "terminal_2_passengers": "t2"}
-MOVEMENTS = {"t1": "terminal_1_scheduled_movements", "t2": "terminal_2_scheduled_movements"}
-FORECAST_FIELDS = ("actual", "univariate", "joint", "joint_with_covariates", "q10", "q50", "q90")
+LEVELS_INDEX = {"q10": 1, "q50": 5, "q90": 9}
 
 
 def read_rows(path: Path) -> list[dict]:
     if not path.exists():
-        raise SystemExit(f"{path} is missing. Run forecast_dublin_airport.py first.")
+        raise SystemExit(f"{path} is missing. Run python run_all.py first.")
     with path.open(newline="") as handle:
         return list(csv.DictReader(handle))
 
 
+def node(series: dict, day: int) -> dict:
+    """One node's numbers for one horizon day."""
+    cov, uni = series["covariates"], series["univariate"]
+    point = cov.get("rec", cov["point"])[day]
+    upoint = uni.get("rec", uni["point"])[day]
+    q = (cov.get("recQ") or cov["q"])[day]
+    uq = (uni.get("recQ") or uni["q"])[day]
+    out = {
+        "actual": series["actual"][day],
+        "univariate": upoint,
+        "joint_with_covariates": point,
+        "raw": {"univariate": uni["point"][day], "covariates": cov["point"][day], "joint": series["joint"]["point"][day]},
+        "q": q,
+        "uq": uq,
+        "plan": {"hist": upoint, "tfm": point, "p90": q[LEVELS_INDEX["q90"]]},
+        "why": {k: v[day] for k, v in series["why"].items()},
+        "scen": {k: v[day] for k, v in series["scen"].items()},
+    }
+    for name, i in LEVELS_INDEX.items():
+        out[name] = q[i]
+    return out
+
+
 def main() -> None:
-    daily = {row["date"]: row for row in read_rows(DAILY)}
-    days: dict[str, dict] = {}
-    for row in read_rows(FORECAST):
-        terminal = TERMINALS.get(row["series"])
-        if terminal is None:
-            continue
-        day = row["date"]
-        source = daily[day]
-        record = days.setdefault(
-            day,
-            {
-                "date": day,
-                "weekday": date.fromisoformat(day).strftime("%a"),
-                "event": source["event_name"] or None,
-                "eventKind": source["event_kind"] or None,
-                "disruption": source["disruption_name"] or None,
-                "delayMin": float(source["avg_departure_delay_min"]),
-            },
-        )
-        values = {field: round(float(row[field])) for field in FORECAST_FIELDS}
-        values["movements"] = int(source[MOVEMENTS[terminal]])
-        record[terminal] = values
+    if not BUNDLE.exists():
+        raise SystemExit(f"{BUNDLE} is missing. Run python run_all.py first.")
+    bundle = json.loads(BUNDLE.read_text())
+    S = bundle["series"]
+    origin = date.fromisoformat(bundle["meta"]["origin"])
+    horizon = bundle["meta"]["horizon"]
+    daily = {row["date"][:10]: row for row in read_rows(DAILY)}
+    market_rows = {(r["date"][:10], r["terminal"], r["market"]): r for r in read_rows(MARKET_DATA)}
+    direction_rows = {(r["date"][:10], r["terminal"], r["market"]): r for r in read_rows(DIRECTIONS)}
+    landside_rows = {r["date"][:10]: r for r in read_rows(LANDSIDE)}
 
-    add_markets(days)
-    add_operations(days)
-    payload = {
-        "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "note": "Synthetic series from forecast_dublin_airport.py, forecast_markets.py and forecast_operations.py. Not Dublin Airport figures.",
-        "days": [days[key] for key in sorted(days)],
-    }
-    OUT.write_text("window.FLOW_DATA = " + json.dumps(payload, indent=1) + ";\n")
-    print(f"Wrote {len(payload['days'])} days to {OUT.relative_to(ROOT)}")
-
-
-def add_markets(days: dict[str, dict]) -> None:
-    """Attach per-market actuals, forecasts, schedules and passenger mix."""
-    if not (MARKET_DATA.exists() and MARKET_FORECAST.exists()):
-        print("Market files are missing; run forecast_markets.py for destinations. Exporting terminals only.")
-        return
-    mix = {}
-    for row in read_rows(MARKET_DATA):
-        day = row["date"][:10]
-        if day in days:
-            mix[(day, row["terminal"], row["market"])] = row
-    by_terminal: dict[tuple[str, str], list[dict]] = {}
-    for row in read_rows(MARKET_FORECAST):
-        by_terminal.setdefault((row["date"][:10], row["terminal"]), []).append(row)
-
-    for (day, terminal), rows in by_terminal.items():
-        totals = days[day][terminal]
-        univ_sum = sum(float(r["univariate"]) for r in rows)
-        cov_sum = sum(float(r["joint_with_covariates"]) for r in rows)
-        markets = {}
-        for r in rows:
-            source = mix[(day, terminal, r["market"])]
-            univ, cov = float(r["univariate"]), float(r["joint_with_covariates"])
-            markets[r["market"]] = {
-                "actual": round(float(r["actual"])),
-                "univariate": round(univ),
-                "joint_with_covariates": round(cov),
-                "q10": round(float(r["q10"])),
-                "q90": round(float(r["q90"])),
-                "movements": int(source["scheduled_movements"]),
-                "mix": {p: float(source[f"mix_{p}"]) for p in PERSONAS},
-                "plan": {
-                    "hist": round(totals["univariate"] * univ / univ_sum),
-                    "tfm": round(totals["joint_with_covariates"] * cov / cov_sum),
-                    "p90": round(totals["q90"] * cov / cov_sum),
-                },
-            }
-        days[day].setdefault("markets", {})[terminal] = markets
-
-
-def forecast_values(row: dict) -> dict:
-    return {
-        "actual": round(float(row["actual"])),
-        "univariate": round(float(row["univariate"])),
-        "joint_with_covariates": round(float(row["joint_with_covariates"])),
-        "q10": round(float(row["q10"])),
-        "q90": round(float(row["q90"])),
-    }
-
-
-def add_operations(days: dict[str, dict]) -> None:
-    """Attach arrivals/departures by market, ground transport, car parks and staff."""
-    if not (DIRECTIONS.exists() and LANDSIDE.exists() and OPS_FORECAST.exists()):
-        print("Operations files are missing; run forecast_operations.py for arrivals and landside. Skipping them.")
-        return
-    shares = {}
-    for row in read_rows(DIRECTIONS):
-        day = row["date"][:10]
-        if day in days:
-            shares[(day, row["terminal"], row["market"])] = row
-    direction_rows: dict[tuple[str, str], list[dict]] = {}
-    landside_fc: dict[str, dict[str, dict]] = {}
-    for row in read_rows(OPS_FORECAST):
-        day = row["date"][:10]
-        if row["group"] == "direction":
-            direction_rows.setdefault((day, row["terminal"]), []).append(row)
-        else:
-            landside_fc.setdefault(day, {})[row["key"]] = row
-
-    # Arrivals and departures per market, reconciled so that both directions of
-    # every market add up to the terminal forecast of the same model.
-    for (day, terminal), rows in direction_rows.items():
-        totals = days[day][terminal]
-        univ_sum = sum(float(r["univariate"]) for r in rows)
-        cov_sum = sum(float(r["joint_with_covariates"]) for r in rows)
-        markets = days[day].setdefault("markets", {}).setdefault(terminal, {})
-        for r in rows:
-            values = forecast_values(r)
-            univ, cov = float(r["univariate"]), float(r["joint_with_covariates"])
-            values["plan"] = {
-                "hist": round(totals["univariate"] * univ / univ_sum),
-                "tfm": round(totals["joint_with_covariates"] * cov / cov_sum),
-                "p90": round(totals["q90"] * cov / cov_sum),
-            }
-            entry = markets.setdefault(r["market"], {})
-            entry[r["key"]] = values
-            source = shares[(day, terminal, r["market"])]
-            entry["transferShare"] = float(source["transfer_share"])
-            entry["residentShare"] = float(source["resident_share"])
-            entry["eventDirection"] = int(source["event_direction"])
-
-    for row in read_rows(LANDSIDE):
-        day = row["date"][:10]
-        if day not in days:
-            continue
-        fc = landside_fc.get(day, {})
-
-        def with_plan(key: str) -> dict:
-            values = forecast_values(fc[key])
-            values["plan"] = {"hist": values["univariate"], "tfm": values["joint_with_covariates"], "p90": values["q90"]}
-            return values
-
-        num = lambda key: int(float(row[key]))
-        days[day]["landside"] = {
-            "taxi": {t: with_plan(f"taxi_pickups_{t}") for t in ("t1", "t2")},
-            "bus": {t: with_plan(f"bus_pax_{t}") for t in ("t1", "t2")},
-            "hbEntries": with_plan("hb_entries"),
-            "hbOcc": with_plan("hb_occ_start"),
+    days = []
+    keys = sorted(daily)
+    start = keys.index(origin.isoformat())
+    for i in range(horizon):
+        day = keys[start + i]
+        src = daily[day]
+        rec = {
+            "date": day,
+            "weekday": date.fromisoformat(day).strftime("%a"),
+            "event": src["event_name"] or None,
+            "eventKind": src["event_kind"] or None,
+            "disruption": src["disruption_name"] or None,
+            "delayMin": float(src["avg_departure_delay_min"]),
+            "cancelledPct": float(src["cancelled_pct"]),
+            "schoolHoliday": bool(int(src["school_holiday"])),
+        }
+        for t, col in (("t1", "terminal_1"), ("t2", "terminal_2")):
+            rec[t] = node(S[f"terminals:{t}"], i)
+            rec[t]["joint"] = S[f"terminals:{t}"]["joint"]["point"][i]
+            rec[t]["movements"] = int(src[f"{col}_scheduled_movements"])
+            rec[t]["operated"] = int(src[f"{col}_operated_movements"])
+        rec["markets"] = {}
+        for t in ("t1", "t2"):
+            for key, s in S.items():
+                fam, name = key.split(":")
+                if fam != f"markets_{t}":
+                    continue
+                m = name.split("/")[1]
+                mrow = market_rows[(day, t, m)]
+                drow = direction_rows[(day, t, m)]
+                entry = node(s, i)
+                entry["movements"] = int(mrow["scheduled_movements"])
+                entry["mix"] = {p: float(mrow[f"mix_{p}"]) for p in PERSONAS}
+                for d in ("arr", "dep"):
+                    entry[d] = node(S[f"directions_{t}:{t}/{m}/{d}"], i)
+                entry["transferShare"] = float(drow["transfer_share"])
+                entry["residentShare"] = float(drow["resident_share"])
+                entry["eventDirection"] = int(drow["event_direction"])
+                rec["markets"].setdefault(t, {})[m] = entry
+        ls = landside_rows[day]
+        num = lambda k: int(float(ls[k]))
+        rec["landside"] = {
+            "taxi": {t: node(S[f"landside:taxi_pickups_{t}"], i) for t in ("t1", "t2")},
+            "bus": {t: node(S[f"landside:bus_pax_{t}"], i) for t in ("t1", "t2")},
+            "hbEntries": node(S["landside:hb_entries"], i),
+            "hbOcc": node(S["landside:hb_occ_start"], i),
             "taxiDropoffs": {t: num(f"taxi_dropoffs_{t}") for t in ("t1", "t2")},
             "dropoffCars": {t: num(f"dropoff_cars_{t}") for t in ("t1", "t2")},
             "rentalParties": {t: num(f"rental_parties_{t}") for t in ("t1", "t2")},
             "carparks": {
-                key: {
-                    "cap": cap,
-                    "occ0": num(f"{key}_occ_start"),
-                    "entries": num(f"{key}_entries"),
-                    "exits": num(f"{key}_exits"),
-                    "turnedAway": num(f"{key}_turned_away"),
-                }
-                for key, cap in CAR_PARK_CAPACITY.items()
+                key: {"cap": spec["cap"], "occ0": num(f"{key}_occ_start"), "entries": num(f"{key}_entries"),
+                      "exits": num(f"{key}_exits"), "turnedAway": num(f"{key}_turned_away")}
+                for key, spec in CAR_PARKS.items()
             },
         }
-        days[day]["staff"] = {shift: num(f"staff_{shift}") for shift in ("early", "mid", "late", "night")}
+        rec["staff"] = {shift: num(f"staff_{shift}") for shift in ("early", "mid", "late", "night")}
+        days.append(rec)
+
+    # Recent actuals for the fan charts: terminals, markets, landside.
+    context_dates_start = keys[start - 120]
+    payload = {
+        "generated": bundle["meta"]["generated"],
+        "note": "Synthetic daily series calibrated to CSO monthly totals for Dublin Airport. "
+                "Daily values, terminals, markets and everything operational are invented.",
+        "meta": bundle["meta"],
+        "accuracy": bundle["accuracy"],
+        "history": bundle["history"],
+        "context": {"start": context_dates_start, "series": bundle["context"]},
+        "labels": {k: v["label"] for k, v in S.items()},
+        "days": days,
+    }
+    OUT.write_text("window.FLOW_DATA = " + json.dumps(payload, separators=(",", ":")) + ";\n")
+    print(f"Wrote {len(days)} days to {OUT.relative_to(ROOT)} ({OUT.stat().st_size / 1e3:.0f} KB)")
 
 
 if __name__ == "__main__":

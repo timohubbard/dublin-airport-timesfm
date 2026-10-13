@@ -45,6 +45,8 @@ from matplotlib.patches import FancyBboxPatch
 import numpy as np
 import pandas as pd
 
+from real_data import market_targets, monthly_factor
+
 CHECKPOINT = "google/timesfm-3.0-pytorch"
 HISTORY_START = date(2023, 1, 1)
 CONTEXT_END = date(2026, 2, 28)
@@ -126,6 +128,20 @@ def seasonal_events(year: int) -> list[tuple[date, str]]:
     for day in range(20, 24):
         marked.append((date(year, 12, day), "Christmas getaway"))
     return marked
+
+
+def school_holiday(day: date) -> bool:
+    """Irish school breaks, approximately: Easter fortnight, summer, mid-terms, Christmas."""
+    easter = easter_sunday(day.year)
+    if easter - timedelta(days=9) <= day <= easter + timedelta(days=7):
+        return True
+    if date(day.year, 6, 28) <= day <= date(day.year, 8, 31):
+        return True
+    if day.month == 10 and day.day >= 26 or day.month == 11 and day.day <= 2:
+        return True
+    if day.month == 2 and 12 <= day.day <= 18:
+        return True
+    return (day.month == 12 and day.day >= 21) or (day.month == 1 and day.day <= 5)
 
 
 def build_dataset(seed: int = SEED) -> pd.DataFrame:
@@ -216,39 +232,93 @@ def build_dataset(seed: int = SEED) -> pd.DataFrame:
     disruption_name[index[FOG_DAY]] = "Fog and flow restrictions"
 
     dow = dates.dayofweek.to_numpy()
-    annual = 1.0 + 0.22 * np.sin(2 * np.pi * (dates.dayofyear.to_numpy() - 110) / 365.25)
-    movement_multiplier = 1.0 + 0.18 * event_intensity
-    t1_movements = T1_BASE_MOVEMENTS * T1_WEEKLY[dow] * annual * movement_multiplier
-    t2_movements = T2_BASE_MOVEMENTS * T2_WEEKLY[dow] * annual * movement_multiplier
-    delay_factor = 1.0 - np.clip((delay - 35.0) / 325.0, 0.0, 0.22)
+    season = np.sin(2 * np.pi * (dates.dayofyear.to_numpy() - 110) / 365.25)
+    holiday = np.array([school_holiday(d) for d in date_objs], dtype=np.float64)
 
-    innovation = rng.normal(0.0, 0.012, size=n)
-    shared = np.zeros(n)
+    # Each event gets its own size. Airlines add some seats for it (published
+    # in the schedule) and the rest shows up as fuller aircraft, which no
+    # covariate reveals. So the event flag says "busier", not "how much".
+    capacity_lift = np.zeros(n)
+    demand_lift = np.zeros(n)
+    t = 0
+    while t < n:
+        if event_intensity[t]:
+            span = 1
+            while t + span < n and event_name[t + span] == event_name[t]:
+                span += 1
+            capacity_lift[t:t + span] = rng.uniform(0.03, 0.09)
+            demand_lift[t:t + span] = rng.uniform(0.04, 0.11)
+            t += span
+        else:
+            t += 1
+
+    # Published schedule, fixed about six weeks ahead: a weekly pattern that is
+    # flatter than demand, the season, a little growth and the event seats.
+    trend = 1.0 + 0.03 * (np.arange(n) / 365.25)
+    sched = {}
+    for key, base, weekly in (("t1", T1_BASE_MOVEMENTS, T1_WEEKLY), ("t2", T2_BASE_MOVEMENTS, T2_WEEKLY)):
+        sched[key] = base * np.sqrt(weekly)[dow] * (1.0 + 0.18 * season) * trend * (1.0 + capacity_lift)
+
+    # On the day: weather cancels flights; a few ad-hoc flights are added.
+    cancelled = np.clip((delay - 45.0) / 450.0, 0.0, 0.12) + rng.uniform(0.0, 0.006, size=n)
+    cancelled[index[FOG_DAY]] = 0.16
+    operated = {k: v * (1.0 - cancelled) * np.exp(rng.normal(0.0, 0.004, size=n)) for k, v in sched.items()}
+
+    # Load factor: the rest of the weekly demand pattern, the season, school
+    # holidays, the unpublished part of each event, and slow drifts in demand
+    # (AR(1), persistent) that only the passenger history shows.
+    latent = np.zeros(n)
+    shocks = rng.normal(0.0, 0.0075, size=n)
     for i in range(1, n):
-        shared[i] = 0.5 * shared[i - 1] + innovation[i]
-    idiosyncratic = rng.normal(0.0, 0.008, size=(2, n))
+        latent[i] = 0.93 * latent[i - 1] + shocks[i]
+    delay_factor = 1.0 - np.clip((delay - 40.0) / 600.0, 0.0, 0.08)
 
-    def passengers(movements: np.ndarray, seats: float, load_factor: float, shock: np.ndarray) -> np.ndarray:
-        load = np.clip(load_factor + 0.10 * event_intensity + 0.03 * (annual - 1.0), 0.72, 0.97)
-        volume = movements * seats * load * delay_factor * np.exp(shock)
-        return np.rint(volume).astype(np.int64)
+    def passengers(key: str, seats: float, load_factor: float, weekly: np.ndarray, own: np.ndarray) -> np.ndarray:
+        load = (
+            load_factor * np.sqrt(weekly)[dow]
+            + 0.035 * season
+            + 0.02 * holiday
+            + demand_lift
+        ) * np.exp(latent + own)
+        load = np.clip(load, 0.60, 0.985)
+        return operated[key] * seats * load * delay_factor
+
+    own = rng.normal(0.0, 0.011, size=(2, n))
+    raw = {
+        "t1": passengers("t1", T1_SEATS, T1_LOAD_FACTOR, T1_WEEKLY, own[0]),
+        "t2": passengers("t2", T2_SEATS, T2_LOAD_FACTOR, T2_WEEKLY, own[1]),
+    }
+
+    # Calibrate monthly levels to the CSO's published Dublin figures. The
+    # same smooth factor moves the schedule, scaled so the average number of
+    # flights stays what the demo's gates are laid out for.
+    targets = market_targets()
+    cso_months = set(targets.index)
+    calibrated = {}
+    for key in ("t1", "t2"):
+        factor = monthly_factor(dates, raw[key], targets[key])
+        calibrated[key] = raw[key] * factor
+        sched_factor = factor / factor.mean()
+        sched[key] = sched[key] * sched_factor
+        operated[key] = operated[key] * sched_factor
 
     frame = pd.DataFrame(
         {
             "date": dates,
-            "terminal_1_passengers": passengers(
-                t1_movements, T1_SEATS, T1_LOAD_FACTOR, shared + idiosyncratic[0]
-            ),
-            "terminal_2_passengers": passengers(
-                t2_movements, T2_SEATS, T2_LOAD_FACTOR, shared + idiosyncratic[1]
-            ),
-            "terminal_1_scheduled_movements": np.rint(t1_movements).astype(np.int64),
-            "terminal_2_scheduled_movements": np.rint(t2_movements).astype(np.int64),
+            "terminal_1_passengers": np.rint(calibrated["t1"]).astype(np.int64),
+            "terminal_2_passengers": np.rint(calibrated["t2"]).astype(np.int64),
+            "terminal_1_scheduled_movements": np.rint(sched["t1"]).astype(np.int64),
+            "terminal_2_scheduled_movements": np.rint(sched["t2"]).astype(np.int64),
+            "terminal_1_operated_movements": np.rint(operated["t1"]).astype(np.int64),
+            "terminal_2_operated_movements": np.rint(operated["t2"]).astype(np.int64),
+            "cancelled_pct": np.round(100 * cancelled, 2),
             "event_intensity": event_intensity.astype(np.float32),
             "event_name": event_name,
             "event_kind": event_kind,
+            "school_holiday": holiday.astype(np.int64),
             "avg_departure_delay_min": np.round(delay, 1),
             "disruption_name": disruption_name,
+            "cso_month": [d.to_period("M") in cso_months for d in dates],
         }
     )
     return frame
@@ -314,9 +384,15 @@ def load_forecaster():
 
 
 def _accepted(method, kwargs: dict) -> dict:
+    """Keyword arguments the backend accepts. Optional settings it does not
+    know are dropped; covariates never are, so a TimesFM build that renamed
+    them fails loudly instead of forecasting without them."""
     parameters = inspect.signature(method).parameters
     if any(item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()):
         return kwargs
+    missing = [k for k in kwargs if k not in parameters and "covariates" in k]
+    if missing:
+        raise TypeError(f"{method.__qualname__} does not accept {missing}; check the TimesFM version.")
     return {key: value for key, value in kwargs.items() if key in parameters}
 
 
@@ -393,17 +469,25 @@ def run_forecasts(frame: pd.DataFrame, forecaster) -> pd.DataFrame:
     t1 = frame["terminal_1_passengers"].to_numpy(np.float32)
     t2 = frame["terminal_2_passengers"].to_numpy(np.float32)
     targets = np.stack([t1[:context_len], t2[:context_len]])
-    past_only = frame["avg_departure_delay_min"].to_numpy(np.float32)[:context_len][None, :]
+    past_only = np.stack(
+        [
+            frame["avg_departure_delay_min"].to_numpy(np.float32),
+            frame["terminal_1_operated_movements"].to_numpy(np.float32),
+            frame["terminal_2_operated_movements"].to_numpy(np.float32),
+            frame["cancelled_pct"].to_numpy(np.float32),
+        ]
+    )[:, :context_len]
     past_future = np.stack(
         [
             frame["terminal_1_scheduled_movements"].to_numpy(np.float32),
             frame["terminal_2_scheduled_movements"].to_numpy(np.float32),
             frame["event_intensity"].to_numpy(np.float32),
+            frame["school_holiday"].to_numpy(np.float32),
         ]
     )
     if past_future.shape[1] != context_len + HORIZON_DAYS:
         raise RuntimeError("Past-and-future covariates must cover context and horizon.")
-    if targets.shape != (2, context_len) or past_only.shape != (1, context_len):
+    if targets.shape != (2, context_len) or past_only.shape[1] != context_len:
         raise RuntimeError("Target or past-only covariate shape is wrong.")
 
     print(
