@@ -101,6 +101,7 @@ function frame(now) {
   perf.frames.push(realDt * 1000); if (perf.frames.length > 120) perf.frames.shift();
   if (now - panelAt > 250) {
     panelAt = now; updatePanels(); renderTimelines(); renderPlay();
+    if (now - (frame.hashAt || 0) > 5000 && state.seekTarget == null) { frame.hashAt = now; writeHash(); }
     if ($('perf').classList.contains('show')) {
       const f = [...perf.frames].sort((a, b) => a - b), p95 = f[Math.floor(f.length * 0.95)] || 0;
       $('perf').textContent = `frame p95 ${p95.toFixed(1)} ms · step ${perf.step.toFixed(1)} ms · render ${perf.render.toFixed(1)} ms · ${sim.alive.length} people · ${sim.vehicles.length} vehicles · ${sim.bags.moving.length + sim.bags.belt.length} bags`;
