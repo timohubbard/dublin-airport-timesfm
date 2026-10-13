@@ -7,3 +7,6 @@ data/
 outputs/
 *.egg-info/
 .huggingface/
+
+# Local Claude Code settings
+.claude/
