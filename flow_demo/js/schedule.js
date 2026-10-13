@@ -33,9 +33,11 @@ function marketsFor(day, key) {
   return out;
 }
 
+const genKey = di => di + '|' + (SCN.kind || '');
 function genDay(di) {
-  if (genCache.has(di)) return genCache.get(di);
-  const day = DATA.days[di];
+  const ck = genKey(di);
+  if (genCache.has(ck)) return genCache.get(ck);
+  const day = scenarioDay(di);
   const rnd = mulberry32(hashStr(day.date));
   const gauss = () => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
   const pick = list => list[Math.floor(rnd() * list.length)];
@@ -201,7 +203,8 @@ function genDay(di) {
             continue;
           }
         }
-        const ch = rnd() < meta.nonEU ? 'non' : (pk !== 'family' && pk !== 'prm' && rnd() < meta.egate) ? 'egate' : 'eu';
+        let ch = rnd() < meta.nonEU ? 'non' : (pk !== 'family' && pk !== 'prm' && rnd() < meta.egate) ? 'egate' : 'eu';
+        if (ch === 'egate' && day._scenario === 'egate') ch = 'eu';
         const mode = pickWr(modeSplit(pk, md.rs));
         const met = mode === 'met';
         const bags = bagCount(pk, size, meta.long, rnd, true);
@@ -258,8 +261,8 @@ function genDay(di) {
   }
   out.total = { t1: 0, t2: 0 };
   for (const p of out.depParties) out.total[p.term] += p.size;
-  genCache.set(di, out);
-  if (genCache.size > 2) for (const k of genCache.keys()) { if (k !== di && k !== state.di) { genCache.delete(k); break; } }
+  genCache.set(ck, out);
+  if (genCache.size > 3) for (const k of genCache.keys()) { if (k !== ck && k !== genKey(state.di)) { genCache.delete(k); break; } }
   return out;
 }
 

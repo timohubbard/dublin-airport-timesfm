@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=930982">
+<link rel="stylesheet" href="css/app.css?v=932253">
 </head>
 <body>
 <header class="top">
@@ -15,7 +15,7 @@
     <div class="mark"><i></i></div>
     <div style="min-width:0">
       <div class="title">DUB Operations Twin</div>
-      <div class="sub">Departures, arrivals, transfers, baggage, ground transport and retail · rostered from TimesFM 3 forecasts · <b>synthetic data</b></div>
+      <div class="sub">Whole-airport twin rostered from calibrated TimesFM 3 forecasts · <b>synthetic data, CSO-calibrated</b></div>
     </div>
   </div>
   <div class="transport">
@@ -24,6 +24,10 @@
     <div class="seg" id="speedSeg" aria-label="Simulation speed"></div>
   </div>
   <div class="status">
+    <button class="pill btn" id="storyBtn" title="Guided tour (T)">▶ Guided tour</button>
+    <button class="pill btn" id="studioBtn" title="Forecast Studio (F)">Forecast Studio</button>
+    <button class="pill btn" id="briefBtn" title="Daily ops briefing (R)">Briefing</button>
+    <button class="pill btn icon" id="helpBtn" title="Help and shortcuts (?)" aria-label="Help">?</button>
     <span class="pill live" id="livePill"><i></i><span id="liveTxt">Simulating</span></span>
     <span class="pill num" id="paxPill">0 people on site</span>
   </div>
@@ -36,36 +40,55 @@
     <div class="cal-key">
       <span><i style="background:var(--warn)"></i>Event</span>
       <span><i style="background:#94a3b8"></i>Fog</span>
-      <span><i class="tri"></i>History-only roster breaks its target</span>
+      <span><i class="tri"></i>Chosen roster breaks a target</span>
     </div>
     <div class="dayinfo" id="dayinfo"></div>
+    <div class="tabs ltabs" id="ltabs" role="tablist"></div>
 
-    <h3>Forecast vs actual</h3>
-    <div class="tabs small" id="ftabs"></div>
-    <table class="mtab" id="ftab"></table>
+    <div id="lp-fc" class="tabpane">
+      <h3>Forecast vs actual <button class="linkbtn" id="openStudio" title="Key F">Forecast Studio ↗</button></h3>
+      <div class="tabs small" id="ftabs"></div>
+      <table class="mtab ftab" id="ftab"></table>
+      <div class="fkey" id="fkey"></div>
+      <h3>Why this forecast <small id="whyTotal"></small></h3>
+      <div id="why"></div>
+      <h3>Passenger mix <small id="mixTotal"></small></h3>
+      <div class="mixbar" id="mixbar"></div>
+      <div class="mixk" id="mixk"></div>
+    </div>
 
-    <h3>Passenger mix <small id="mixTotal"></small></h3>
-    <div class="mixbar" id="mixbar"></div>
-    <div class="mixk" id="mixk"></div>
+    <div id="lp-plan" class="tabpane">
+      <h3>Rosters built from</h3>
+      <div class="plans" id="plans"></div>
+      <div class="riskbox" id="riskbox"></div>
+      <div class="hint">Security lanes, passport booths, taxi call-ins and the Holiday Blue shuttle are rostered per 30 min from the chosen forecast. The people, cars and bags follow the day's <b>actual</b> demand. Keys <b>1 2 3</b> switch presets, <b>[ ]</b> move the risk slider.</div>
+      <h3>Cost against risk <small>security, both terminals</small></h3>
+      <div class="pareto"><canvas id="pareto" aria-label="Security cost against risk for each forecast level"></canvas></div>
+      <div id="recommend"></div>
+      <h3>Alerts <small>if demand lands on P90</small></h3>
+      <div id="alerts"></div>
+      <h3>Full-day outlook <small>actual demand vs each roster</small></h3>
+      <table class="ctab" id="ctab"></table>
+      <details class="adjwrap">
+        <summary>Manual adjustments</summary>
+        <div class="adj" id="adj"></div>
+      </details>
+    </div>
 
-    <h3>Rosters built from</h3>
-    <div class="plans" id="plans"></div>
-    <div class="hint">Security lanes, immigration officers, taxi call-ins and the Holiday Blue shuttle are rostered per 30 min from the chosen forecast. The people, cars and bags follow the day's <b>actual</b> demand. Keys <b>1 2 3</b> switch live.</div>
-
-    <details class="adjwrap">
-      <summary>Manual adjustments</summary>
-      <div class="adj" id="adj"></div>
-    </details>
-
-    <h3>Full-day outlook <small>peak wait by roster</small></h3>
-    <table class="ctab" id="ctab"></table>
+    <div id="lp-scn" class="tabpane">
+      <h3>What if… <small>applies to the selected day</small></h3>
+      <div class="scn" id="scn"></div>
+      <label class="told" id="toldWrap"><input type="checkbox" id="told" checked> <span>Tell the forecast <small>TimesFM is re-run with the changed schedule / event calendar</small></span></label>
+      <div id="scnInfo"></div>
+    </div>
 
     <div class="foot">
-      Volumes come from <code>forecast_dublin_airport.py</code>, <code>forecast_markets.py</code> and <code>forecast_operations.py</code> and are invented, not daa figures. Outlet, lounge, carousel and car-park names come from daa's public terminal map; their capacities and every spend figure are illustrative. The layout is a schematic stack (departures, arrivals, baggage hall, roads), not to scale. Traveller types and travel modes are behaviour rules, not observed data.
+      Daily volumes are synthetic, with monthly totals and market mix calibrated to <a href="https://www.cso.ie/en/statistics/transport/aviationstatistics/" target="_blank" rel="noopener">CSO aviation statistics</a> for Dublin Airport; terminals, markets and every operational figure are invented, not daa data. Outlet, lounge, carousel and car-park names come from daa's public terminal map; their capacities, every cost and every spend figure are illustrative. The layout is a schematic stack (departures, arrivals, baggage hall, roads), not to scale.
     </div>
   </aside>
 
   <section class="stage">
+    <div class="studio" id="studio" role="dialog" aria-label="Forecast Studio"></div>
     <div class="mapwrap" id="mapwrap">
       <canvas id="map"></canvas>
       <div class="ov tl">
@@ -82,7 +105,7 @@
       </div>
       <div class="glass seeking" id="seeking"><span id="seekTxt">Fast-forwarding</span><div class="bar"><i id="seekBar"></i></div></div>
       <div class="glass perf" id="perf"></div>
-      <div class="empty" id="empty"><div>No forecast data found.<br><br>Run <code>python forecast_dublin_airport.py</code><br>then <code>python flow_demo/export_flow_data.py</code></div></div>
+      <div class="empty" id="empty"><div>No forecast data found.<br><br>Run <code>python run_all.py</code> in the project folder,<br>then reload this page.</div></div>
     </div>
     <div class="timeline">
       <div class="tlbar"><div class="seg" id="resSeg"></div><div class="tlk" id="tlKey"></div></div>
@@ -134,24 +157,32 @@
   </aside>
 </main>
 
-<script src="flow_data.js?v=930982"></script>
-<script src="js/core.js?v=930982"></script>
-<script src="js/params.js?v=930982"></script>
-<script src="js/geometry.js?v=930982"></script>
-<script src="js/facilities.js?v=930982"></script>
-<script src="js/schedule.js?v=930982"></script>
-<script src="js/roster.js?v=930982"></script>
-<script src="js/sim.js?v=930982"></script>
-<script src="js/flow_dep.js?v=930982"></script>
-<script src="js/flow_arr.js?v=930982"></script>
-<script src="js/flow_other.js?v=930982"></script>
-<script src="js/commerce.js?v=930982"></script>
-<script src="js/baggage.js?v=930982"></script>
-<script src="js/landside.js?v=930982"></script>
-<script src="js/render_map.js?v=930982"></script>
-<script src="js/render_charts.js?v=930982"></script>
-<script src="js/ui.js?v=930982"></script>
-<script src="js/main.js?v=930982"></script>
-<script src="js/verify.js?v=930982"></script>
+<div class="modal" id="help" role="dialog" aria-label="Help"></div>
+<div class="storybar glass" id="storybar"></div>
+<div class="brief" id="brief"></div>
+
+<script src="flow_data.js?v=932253"></script>
+<script src="js/core.js?v=932253"></script>
+<script src="js/params.js?v=932253"></script>
+<script src="js/geometry.js?v=932253"></script>
+<script src="js/facilities.js?v=932253"></script>
+<script src="js/forecast.js?v=932253"></script>
+<script src="js/schedule.js?v=932253"></script>
+<script src="js/roster.js?v=932253"></script>
+<script src="js/decision.js?v=932253"></script>
+<script src="js/sim.js?v=932253"></script>
+<script src="js/flow_dep.js?v=932253"></script>
+<script src="js/flow_arr.js?v=932253"></script>
+<script src="js/flow_other.js?v=932253"></script>
+<script src="js/commerce.js?v=932253"></script>
+<script src="js/baggage.js?v=932253"></script>
+<script src="js/landside.js?v=932253"></script>
+<script src="js/render_map.js?v=932253"></script>
+<script src="js/render_charts.js?v=932253"></script>
+<script src="js/studio.js?v=932253"></script>
+<script src="js/ui.js?v=932253"></script>
+<script src="js/story.js?v=932253"></script>
+<script src="js/main.js?v=932253"></script>
+<script src="js/verify.js?v=932253"></script>
 </body>
 </html>

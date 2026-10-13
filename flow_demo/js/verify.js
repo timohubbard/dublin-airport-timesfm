@@ -2,12 +2,13 @@
 /* ====================================================================
    Verification helpers for the browser console:
      DUB.runHeadless({ di: 16, plan: 'tfm' })   full day, invariant checks
-     DUB.runAll()                               every day × every roster
+     DUB.runAll()                               every day × every roster (blocking)
+     DUB.runAllAsync(); DUB.status()            the same in the background, one day at a time
      DUB.bench({ seconds: 5 })                  frame, step and render times
    ==================================================================== */
 const DUB = {
   runHeadless({ di = state.di, plan = state.plan, until = SIM_END, dt = 8 } = {}) {
-    const keep = { di: state.di, plan: state.plan, playing: state.playing };
+    const keep = { di: state.di, plan: state.plan, playing: state.playing, t: sim ? sim.t : 6 * 3600 };
     state.seekTarget = null; state.playing = false;
     state.di = di; state.plan = plan; gen = genDay(di); rebuildPlans(); resetSim();
     const t0 = performance.now(), problems = [];
@@ -52,18 +53,40 @@ const DUB = {
       spend: Math.round(Object.values(sim.spend).reduce((s, x) => s + x, 0)),
       problems: problems.slice(0, 10),
     };
+    report.checks = {
+      departuresBalance: report.departures.balance === 0,
+      noInvariantProblems: problems.length === 0,
+      gateConflictsAtMost2: gen.gateConflicts <= 2,
+      arrivalsAccounted: arrGen - c.arrDone - report.arrivals.stillInside === 0 || report.arrivals.stillInside <= arrLate,
+    };
+    report.ok = Object.values(report.checks).every(Boolean);
     state.di = keep.di; state.plan = keep.plan; gen = genDay(keep.di); rebuildPlans(); resetSim(); state.playing = keep.playing;
-    seek(6 * 3600);
+    seek(keep.t);
     return report;
   },
-  runAll(plansList = ['hist', 'tfm']) {
+  row(r) {
+    return `${r.day.slice(5)} ${r.plan.padEnd(4)} sec ${r.security.live.join('/')} imm ${r.immigration.live.join('/')} taxi ${r.taxi.peakWait} missed ${r.departures.missed} bal ${r.departures.balance} gate ${r.gateConflicts} ${r.ok ? 'ok' : 'FAIL ' + Object.entries(r.checks).filter(([, v]) => !v).map(([k]) => k).join(',')} ${r.problems.length ? r.problems[0] : ''}`;
+  },
+  runAll(plansList = ['hist', 'tfm', 'p90']) {
     const rows = [];
-    for (let di = 0; di < DATA.days.length; di++) for (const plan of plansList) {
-      const r = DUB.runHeadless({ di, plan });
-      rows.push(`${r.day.slice(5)} ${plan.padEnd(4)} sec ${r.security.live.join('/')} imm ${r.immigration.live.join('/')} taxi ${r.taxi.peakWait} missed ${r.departures.missed} bal ${r.departures.balance} gate ${r.gateConflicts} ${r.problems.length ? 'PROBLEMS ' + r.problems[0] : ''}`);
-    }
+    for (let di = 0; di < DATA.days.length; di++) for (const plan of plansList) rows.push(DUB.row(DUB.runHeadless({ di, plan })));
     return rows.join('\n');
   },
+  runAllAsync(plansList = ['hist', 'tfm', 'p90'], days = DATA.days.map((_, i) => i)) {
+    const jobs = days.flatMap(di => plansList.map(plan => ({ di, plan })));
+    DUB.results = { total: jobs.length, done: 0, rows: [], reports: [], failed: 0 };
+    // A MessageChannel keeps going in a hidden tab, where timers are throttled.
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => {
+      const j = jobs.shift(); if (!j) return;
+      const r = DUB.runHeadless(j);
+      DUB.results.rows.push(DUB.row(r)); DUB.results.reports.push(r); DUB.results.done++; if (!r.ok) DUB.results.failed++;
+      ch.port2.postMessage(0);
+    };
+    ch.port2.postMessage(0);
+    return `${jobs.length} runs queued`;
+  },
+  status() { const R = DUB.results; return R ? `${R.done}/${R.total} done, ${R.failed} failed\n` + R.rows.join('\n') : 'nothing queued'; },
   bench({ seconds = 5 } = {}) {
     perf.frames = [];
     return new Promise(res => setTimeout(() => {

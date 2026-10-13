@@ -74,7 +74,7 @@ function termState(key) {
 }
 function resetSim() {
   agentSeq = 0;
-  seedSim(gen.day.date + '|' + state.plan + '|' + JSON.stringify(state.offset));
+  seedSim(gen.day.date + '|' + state.plan + '|' + JSON.stringify(state.offset) + '|' + (SCN.kind || ''));
   sim = {
     t: DAY_START, alive: [], events: new Heap(), ptr: { dep: 0, arr: 0, grt: 0, stf: 0, fl: 0 },
     ts: { t1: termState('t1'), t2: termState('t2') },
@@ -100,11 +100,13 @@ function rebuildPlans() {
   }
   plans.shuttle = planShuttle(gen, state.plan);
   outlook = {};
-  for (const p of PLANS) {
-    outlook[p.key] = {};
+  const keys = PLANS.map(p => p.key);
+  if (!keys.includes(state.plan)) keys.push(state.plan);
+  for (const key of keys) {
+    outlook[key] = {};
     for (const r of RESOURCES) {
-      outlook[p.key][r.id] = {};
-      for (const k of TERMS) outlook[p.key][r.id][k] = r.outlook(gen, k, p.key === state.plan ? plans[r.id][k] : r.plan(gen, k, p.key, state.offset[r.id][k]));
+      outlook[key][r.id] = {};
+      for (const k of TERMS) outlook[key][r.id][k] = r.outlook(gen, k, key === state.plan ? plans[r.id][k] : r.plan(gen, k, key, state.offset[r.id][k]));
     }
   }
 }
@@ -174,7 +176,7 @@ function serveSecurity(ts, t0, t) {
   ts.planned = t >= OPEN[k] ? lanesAt(k, t) : 0;
   const w = ts.planned ? ts.secQ.length / (ts.planned * LANE_RATE / 60) : 0;
   ts.surge = ts.planned > 0 && (ts.surge ? w > SURGE_OFF : w > SURGE_ON);
-  ts.openN = Math.min(ts.G.maxLanes, ts.planned + (ts.surge ? SURGE : 0));
+  ts.openN = Math.min(maxLanesOf(k), ts.planned + (ts.surge ? SURGE : 0));
   const n = ts.openN, order = ts.G.laneOrder;
   for (const L of ts.lanes) L.open = false;
   if (n > 0) {

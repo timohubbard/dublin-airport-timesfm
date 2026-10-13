@@ -50,8 +50,20 @@ for (const k of TERMS) {
 }
 $('playBtn').onclick = () => { state.playing = !state.playing; if (sim.t >= SIM_END - 1) seek(DAY_START + 3600); renderPlay(); };
 document.addEventListener('keydown', e => {
-  if (e.target.closest && e.target.closest('input,textarea,summary')) return;
+  if (e.target.closest && e.target.closest('input[type=text],textarea,summary,select')) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
+  if (k === 'Escape' && closeOverlays()) return;
+  if (k === '?' || (k === '/' && e.shiftKey)) { toggleHelp(); return; }
+  if (k === 'f' || k === 'F') { toggleStudio(); return; }
+  if (k === 't' || k === 'T') { story.running ? storyStop() : storyStart(); return; }
+  if (k === 'r' || k === 'R') { openBriefing(); return; }
+  if (k === '[' || k === ']') {
+    const li = state.plan === 'hist' ? 5 : planLevelIndex(state.plan), i = RISK_LEVELS.indexOf(li);
+    const j = clamp((i < 0 ? 0 : i) + (k === ']' ? 1 : -1), 0, RISK_LEVELS.length - 1);
+    setPlan('q' + RISK_LEVELS[j]); return;
+  }
+  if (story.running && (k === 'ArrowRight' || k === 'ArrowLeft')) { k === 'ArrowRight' ? storyNext() : storyPrev(); return; }
   if (e.code === 'Space') { e.preventDefault(); $('playBtn').click(); }
   else if (k === 'ArrowRight') seek(sim.t + 15 * 60);
   else if (k === 'ArrowLeft') seek(sim.t - 15 * 60);
@@ -59,7 +71,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'Escape') { state.selected = null; updateFollow(); }
   else if (k === 'c') { const m = COLOR_MODES.map(x => x[0]); state.colorMode = m[(m.indexOf(state.colorMode) + 1) % m.length]; renderSegs(); renderLegend(); }
   else if (k === 'p' || k === 'P') $('perf').classList.toggle('show');
-  else if (PRESETS[k.toUpperCase()] && !e.metaKey && !e.ctrlKey) goPreset(k.toUpperCase());
+  else if (PRESETS[k.toUpperCase()]) goPreset(k.toUpperCase());
 });
 new ResizeObserver(() => { resizeMap(); bgKey = ''; }).observe($('mapwrap'));
 
@@ -99,13 +111,22 @@ function frame(now) {
 
 function init() {
   if (!DATA || !DATA.days || !DATA.days.length) { $('empty').classList.add('show'); return; }
-  buildCalendar(); buildSegs(); buildCards(); buildRightTabs(); renderPlans(); renderAdj(); renderSegs(); renderLegend();
+  const h = readHash();
+  state.di = h.di ?? Math.max(0, DATA.days.findIndex(d => d.event));
+  if (h.plan) state.plan = h.plan;
+  if (h.scn) SCN.kind = h.scn;
+  buildCalendar(); buildSegs(); buildCards(); buildRightTabs(); buildLeftTabs(); renderPlans(); renderAdj(); renderSegs(); renderLegend();
   resizeMap();
-  state.di = Math.max(0, DATA.days.findIndex(d => d.event));
-  gen = genDay(state.di); rebuildPlans(); resetSim(); renderDayPanel(); renderOutlook();
-  seek(6 * 3600);
+  gen = genDay(state.di); rebuildPlans(); resetSim(); renderDayPanel(); renderOutlook(); renderScenario();
+  seek(h.t ?? 6 * 3600);
   renderPlay();
   requestAnimationFrame(frame);
+  $('studioBtn').onclick = toggleStudio; $('openStudio').onclick = toggleStudio;
+  $('storyBtn').onclick = () => (story.running ? storyStop() : storyStart());
+  $('helpBtn').onclick = toggleHelp; $('briefBtn').onclick = openBriefing;
   setTimeout(() => computeRisk(0), 1500);
+  if (!localStorageGet('dubtwin.seenHelp')) setTimeout(() => { if (!story.running) showHint(); }, 1200);
 }
+function localStorageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function localStorageSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private window */ } }
 init();

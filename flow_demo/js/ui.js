@@ -37,30 +37,80 @@ function renderDayPanel() {
   renderMix();
 }
 const FTABS = [['term', 'Terminals'], ['dep', 'Departures'], ['arr', 'Arrivals'], ['land', 'Landside']];
-function renderForecastTab() {
-  const d = gen.day, tab = state.ftab || 'term';
-  $('ftabs').innerHTML = FTABS.map(([k, n]) => `<button data-k="${k}" class="${k === tab ? 'on' : ''}">${n}</button>`).join('');
-  $('ftabs').querySelectorAll('button').forEach(b => b.onclick = () => { state.ftab = b.dataset.k; renderForecastTab(); });
-  const head = `<tr><th>${tab === 'term' ? '' : tab === 'land' ? 'Series' : 'Market'}</th><th>Actual</th><th>History</th><th>Covariates</th></tr>`;
-  let rows = '';
-  if (tab === 'term') {
-    for (const k of TERMS) rows += `<tr><td>${GEO[k].name}</td><td>${fmtInt(d[k].actual)}</td><td>${errChip(d[k].univariate, d[k].actual)}</td><td>${errChip(d[k].joint_with_covariates, d[k].actual)}</td></tr>`;
-  } else if (tab === 'dep' || tab === 'arr') {
+const fmtK = v => (Math.abs(v) >= 10000 ? (v / 1000).toFixed(1) + 'k' : fmtInt(v));
+const errTxt = (f, a) => { if (!a) return ''; const e = (f - a) / a * 100; const c = Math.abs(e) < 5 ? 'g' : Math.abs(e) < 12 ? 'w' : 'b'; return `<span class="err ${c}">${e > 0 ? '+' : ''}${e.toFixed(0)}%</span>`; };
+/* Rows for the forecast table: name, actual, history-only, covariate median, and the calibrated 80% band. */
+function forecastRows(tab, d = gen.day, mk = gen.mk) {
+  const row = (name, n, color) => ({ name, color, a: n.actual, u: n.univariate, c: n.joint_with_covariates, lo: n.q ? n.q[1] : n.q10, hi: n.q ? n.q[9] : n.q90 });
+  if (tab === 'term') return TERMS.map(k => row(GEO[k].short, d[k]));
+  if (tab === 'dep' || tab === 'arr') {
     const agg = {};
     for (const k of TERMS) for (const m of TERMINAL_MARKETS[k]) {
-      const v = gen.mk[k][m][tab], o = agg[m] || (agg[m] = { a: 0, u: 0, c: 0 });
-      o.a += v.actual; o.u += v.univariate; o.c += v.joint_with_covariates;
+      const v = mk[k][m][tab], o = agg[m] || (agg[m] = { actual: 0, univariate: 0, joint_with_covariates: 0, q: v.q ? v.q.map(() => 0) : null });
+      o.actual += v.actual; o.univariate += v.univariate; o.joint_with_covariates += v.joint_with_covariates;
+      if (o.q && v.q) v.q.forEach((x, i) => { o.q[i] += x; });
     }
-    rows = Object.keys(MARKETS).map(m => { const o = agg[m]; return `<tr><td><i style="background:${MARKETS[m].color}"></i>${MARKETS[m].short}</td><td>${fmtInt(o.a)}</td><td>${errChip(o.u, o.a)}</td><td>${errChip(o.c, o.a)}</td></tr>`; }).join('');
-  } else {
-    const ls = d.landside;
-    if (!ls) rows = `<tr><td colspan="4" style="color:var(--warn)">Run forecast_operations.py</td></tr>`;
-    else {
-      const r = (n, v) => `<tr><td>${n}</td><td>${fmtInt(v.actual)}</td><td>${errChip(v.univariate, v.actual)}</td><td>${errChip(v.joint_with_covariates, v.actual)}</td></tr>`;
-      rows = r('Taxi pickups T1', ls.taxi.t1) + r('Taxi pickups T2', ls.taxi.t2) + r('Bus & coach T1', ls.bus.t1) + r('Bus & coach T2', ls.bus.t2) + r('Holiday Blue in', ls.hbEntries) + r('Holiday Blue cars', ls.hbOcc);
-    }
+    return Object.keys(MARKETS).filter(m => agg[m]).map(m => row(MARKETS[m].short, agg[m], MARKETS[m].color));
   }
-  $('ftab').innerHTML = head + rows;
+  const ls = d.landside; if (!ls) return [];
+  return [['Taxi pickups T1', ls.taxi.t1], ['Taxi pickups T2', ls.taxi.t2], ['Bus & coach T1', ls.bus.t1], ['Bus & coach T2', ls.bus.t2], ['Holiday Blue in', ls.hbEntries], ['Holiday Blue cars', ls.hbOcc]].map(([n, v]) => row(n, v));
+}
+function renderForecastTab() {
+  const tab = state.ftab || 'term';
+  $('ftabs').innerHTML = FTABS.map(([k, n]) => `<button data-k="${k}" class="${k === tab ? 'on' : ''}">${n}</button>`).join('');
+  $('ftabs').querySelectorAll('button').forEach(b => b.onclick = () => { state.ftab = b.dataset.k; renderForecastTab(); });
+  const rows = forecastRows(tab);
+  const head = `<tr><th>${tab === 'term' ? '' : tab === 'land' ? 'Series' : 'Market'}</th><th>Actual</th><th title="TimesFM, history only">History</th><th title="TimesFM with schedule and events: median and calibrated 80% band">TimesFM</th></tr>`;
+  const body = rows.map(r => {
+    const inside = r.a >= r.lo && r.a <= r.hi;
+    return `<tr><td>${r.color ? `<i style="background:${r.color}"></i>` : ''}${r.name}</td><td>${fmtK(r.a)}</td><td>${fmtK(r.u)}${errTxt(r.u, r.a)}</td><td>${fmtK(r.c)}${errTxt(r.c, r.a)}<span class="band ${inside ? 'in' : 'out'}" title="${inside ? 'Actual inside the band' : 'Actual outside the band'}">${fmtK(r.lo)}–${fmtK(r.hi)}</span></td></tr>`;
+  }).join('');
+  // 28-day WAPE for the same rows, every day of the holdout.
+  let su = 0, sc = 0, sa = 0, inside = 0, n = 0;
+  DATA.days.forEach((dd, i) => {
+    const g = i === state.di ? gen : { day: dd, mk: Object.fromEntries(TERMS.map(k => [k, marketsFor(dd, k)])) };
+    for (const r of forecastRows(tab, g.day, g.mk)) { su += Math.abs(r.u - r.a); sc += Math.abs(r.c - r.a); sa += r.a; inside += r.a >= r.lo && r.a <= r.hi; n++; }
+  });
+  const foot = sa ? `<tr class="tot"><td>28-day error</td><td></td><td>${(su / sa * 100).toFixed(1)}%</td><td>${(sc / sa * 100).toFixed(1)}% · ${Math.round(inside / n * 100)}% in band</td></tr>` : '';
+  $('ftab').innerHTML = head + body + foot;
+  $('fkey').innerHTML = `Error vs actual: <span class="err g">&lt;5%</span> <span class="err w">5–12%</span> <span class="err b">&gt;12%</span> · band <span class="bandk in">holds</span> <span class="bandk out">misses</span> the actual. Backtest: 80% bands held ${pctCov('terminals')} of days on 26 unseen origins.`;
+  renderWhy();
+}
+function pctCov(fam) {
+  const r = (DATA.accuracy?.leaderboard || []).find(x => x.family === fam && x.slice === 'all' && x.model === 'covariates');
+  return r ? `${Math.round(r.cov80 * 100)}%` : '—';
+}
+/* Shapley split of the covariate forecast for both terminals: what each covariate group adds. */
+const GROUP_COLORS = { schedule: '#38bdf8', events: '#fbbf24', calendar: '#a78bfa' };
+function whyParts(d = gen.day) {
+  const parts = { base: 0, schedule: 0, events: 0, calendar: 0 };
+  for (const k of TERMS) { const w = d[k].why; if (!w) return null; for (const g in parts) parts[g] += w[g]; }
+  return parts;
+}
+function renderWhy() {
+  const d = gen.day, w = whyParts(d);
+  if (!w) { $('why').innerHTML = '<div class="sub2">Explanations need the v2 export.</div>'; $('whyTotal').textContent = ''; return; }
+  const fc = w.base + w.schedule + w.events + w.calendar, act = d.t1.actual + d.t2.actual;
+  const lo = d.t1.q[1] + d.t2.q[1], hi = d.t1.q[9] + d.t2.q[9];
+  $('whyTotal').textContent = `both terminals`;
+  const steps = [['Baseline', w.base, '#475569', 'TimesFM with the horizon\u2019s covariates neutralised: the schedule of the same weekday over the four weeks before the forecast was made, no event, no holiday'],
+    ['Published schedule', w.schedule, GROUP_COLORS.schedule, 'Flights planned for the day versus the same weekday in the four weeks before the forecast (includes the seasonal ramp-up airlines have published)'],
+    ['Event calendar', w.events, GROUP_COLORS.events, d.event ? `Flagged: ${d.event}` : 'No event flagged'],
+    ['Holidays & direction', w.calendar, GROUP_COLORS.calendar, 'School holidays and inbound/outbound event days']];
+  const max = Math.max(fc, act, w.base) * 1.04, min = Math.min(w.base, fc, act) * 0.9;
+  const X = v => ((v - min) / (max - min) * 100).toFixed(2);
+  let cum = 0, html = '';
+  steps.forEach(([name, v, col, tip], i) => {
+    const from = i === 0 ? min : cum, to = i === 0 ? v : cum + v;
+    const l = Math.min(from, to), r = Math.max(from, to);
+    html += `<div class="wf" title="${tip}"><span class="wn">${name}</span><span class="wb"><i style="left:${X(l)}%;width:${(X(r) - X(l))}%;background:${col}"></i></span><b>${i === 0 ? fmtK(v) : (v >= 0 ? '+' : '−') + fmtInt(Math.abs(v))}</b></div>`;
+    cum = to;
+  });
+  html += `<div class="wf tot"><span class="wn">Forecast</span><span class="wb"><i style="left:${X(lo)}%;width:${X(hi) - X(lo)}%;background:rgba(45,212,191,.25)"></i><i style="left:${X(fc)}%;width:2px;background:var(--accent)"></i><i class="act" style="left:${X(act)}%"></i></span><b>${fmtK(fc)}</b></div>`;
+  const big = steps.slice(1).filter(s => Math.abs(s[1]) > 0.01 * fc).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const words = big.length ? big.map(([n, v]) => `${n.toLowerCase()} ${v >= 0 ? 'adds' : 'takes off'} ${fmtInt(Math.abs(v))}`).join(', ') : 'nothing in the calendar moves it much';
+  html += `<div class="whytxt">TimesFM expects <b>${fmtInt(fc)}</b> passengers (80% band ${fmtK(lo)}–${fmtK(hi)}); ${words}. Actual: <b>${fmtInt(act)}</b> <span class="sub2">(white tick)</span>. Exact Shapley values from 8 TimesFM runs.</div>`;
+  $('why').innerHTML = html;
 }
 function renderMix() {
   const tot = PERSONA_KEYS.reduce((s, p) => s + gen.persona[p], 0) || 1;
@@ -68,9 +118,17 @@ function renderMix() {
   $('mixbar').innerHTML = PERSONA_KEYS.map(p => `<i style="width:${gen.persona[p] / tot * 100}%;background:${PERSONAS[p].color}" title="${PERSONAS[p].name}"></i>`).join('');
   $('mixk').innerHTML = PERSONA_KEYS.map(p => `<span><i style="background:${PERSONAS[p].color}"></i>${PERSONAS[p].name}<b>${(gen.persona[p] / tot * 100).toFixed(gen.persona[p] / tot < 0.05 ? 1 : 0)}%</b></span>`).join('');
 }
+const PRESET_KEYS = ['hist', 'tfm', 'p90'];
 function renderPlans() {
   $('plans').innerHTML = PLANS.map((p, i) => `<button class="plan ${p.key === state.plan ? 'on' : ''}" data-k="${p.key}"><span class="radio"></span><span><b>${i + 1} · ${p.name}</b><span>${p.desc}</span></span></button>`).join('');
   $('plans').querySelectorAll('.plan').forEach(b => b.onclick = () => setPlan(b.dataset.k));
+  const li = state.plan === 'hist' ? 5 : planLevelIndex(state.plan), idx = RISK_LEVELS.indexOf(li);
+  const custom = !PRESET_KEYS.includes(state.plan);
+  $('riskbox').innerHTML = `<div class="rh"><span>Risk appetite</span><b class="${custom ? 'on' : ''}">${state.plan === 'hist' ? 'History only' : 'Plan for ' + LEVEL_NAME(li)}</b></div>
+    <input type="range" id="risk" min="0" max="${RISK_LEVELS.length - 1}" step="1" value="${Math.max(0, idx)}" aria-label="Forecast quantile to roster for">
+    <div class="rt">${RISK_LEVELS.map(i => `<span>${LEVEL_NAME(i)}</span>`).join('')}</div>
+    <div class="sub2">Rosters for the calibrated quantile you choose: P50 is the most likely demand, P95 covers 19 days in 20.</div>`;
+  $('risk').oninput = e => setPlan('q' + RISK_LEVELS[+e.target.value]);
 }
 function renderAdj() {
   let html = `<span></span><span class="hdr">T1</span><span class="hdr">T2</span>`;
@@ -79,19 +137,126 @@ function renderAdj() {
     for (const k of TERMS) html += `<span class="stepper"><button data-r="${r.id}" data-k="${k}" data-d="-1" aria-label="Fewer">−</button><span>${state.offset[r.id][k] > 0 ? '+' : ''}${state.offset[r.id][k]}</span><button data-r="${r.id}" data-k="${k}" data-d="1" aria-label="More">+</button></span>`;
   }
   $('adj').innerHTML = html;
-  $('adj').querySelectorAll('button').forEach(b => b.onclick = () => {
-    const o = state.offset[b.dataset.r]; o[b.dataset.k] = clamp(o[b.dataset.k] + +b.dataset.d, -6, 6);
-    rebuildPlans(); renderAdj(); renderOutlook();
-  });
+  $('adj').querySelectorAll('button').forEach(b => b.onclick = () => adjust(b.dataset.r, b.dataset.k, +b.dataset.d));
 }
+function adjust(r, k, d) {
+  const o = state.offset[r]; o[k] = clamp(o[k] + d, -6, 6);
+  rebuildPlans(); renderAdj(); renderOutlook(); renderDecision(); scheduleRisk();
+}
+const outlookPlans = () => (PRESET_KEYS.includes(state.plan) ? PLANS.map(p => p.key) : [...PLANS.map(p => p.key), state.plan]);
 function renderOutlook() {
-  let html = `<tr><th></th>${PLANS.map(p => `<th>${p.short.replace('Covariates ', 'Cov. ')}</th>`).join('')}</tr>`;
+  const keys = outlookPlans();
+  let html = `<tr><th></th>${keys.map(k => `<th class="${k === state.plan ? 'selc' : ''}">${planShort(k)}</th>`).join('')}</tr>`;
   for (const r of RESOURCES) for (const k of TERMS) {
-    html += `<tr><td>${r.name} ${GEO[k].short}</td>${PLANS.map(p => `<td class="${p.key === state.plan ? 'selc' : ''}">${chip(outlook[p.key][r.id][k].peak, r.threshold)}</td>`).join('')}</tr>`;
+    html += `<tr><td>${r.name} ${GEO[k].short}</td>${keys.map(p => {
+      const o = outlook[p][r.id][k], c = planCost(r.id, outlookPlan(p, r.id, k));
+      const within = o.tot ? (1 - o.late / o.tot) * 100 : 100;
+      return `<td class="${p === state.plan ? 'selc' : ''}">${chip(o.peak, r.threshold)}<span class="osub">${within.toFixed(within > 99 ? 1 : 0)}% ≤${COST.serviceWait[r.id]}m · ${r.id === 'taxi' ? fmtInt(c.units) + ' cabs' : fmtInt(c.staffH) + ' h'}</span></td>`;
+    }).join('')}</tr>`;
   }
+  const eur = keys.map(p => RESOURCES.filter(r => r.id !== 'taxi').reduce((s, r) => s + TERMS.reduce((x, k) => x + planCost(r.id, outlookPlan(p, r.id, k)).eur, 0), 0));
+  html += `<tr class="tot"><td>Staff cost <span class="sub2">illustr.</span></td>${eur.map((v, i) => `<td class="${keys[i] === state.plan ? 'selc' : ''}">€${fmtK(v)}</td>`).join('')}</tr>`;
   $('ctab').innerHTML = html;
 }
+function outlookPlan(p, rid, k) { return p === state.plan ? plans[rid][k] : (outlookPlans.cache[p + rid + k] ||= RES[rid].plan(gen, k, p, state.offset[rid][k])); }
+outlookPlans.cache = {};
 
+/* ---- decision panel: Pareto, recommendation, alerts ---- */
+let paretoCache = null;
+function renderDecision() {
+  if (!$('pareto')) return;
+  const pts = paretoSecurity(gen);
+  paretoCache = pts;
+  drawPareto(pts);
+  const rec = recommendLevel(pts), cur = pts.find(p => p.key === (state.plan === 'tfm' ? 'q5' : state.plan === 'p90' ? 'q9' : state.plan));
+  const curTxt = cur ? `${planLabel(state.plan)}: €${fmtK(cur.cost)} of screening, ${((1 - cur.late) * 100).toFixed(1)}% of passengers expected within ${COST.serviceWait.sec} min.` : '';
+  $('recommend').innerHTML = `<div class="rec"><b>Cheapest roster expected to keep ${Math.round(COST.goal * 100)}% within ${COST.serviceWait.sec} min: ${LEVEL_NAME(planLevelIndex(rec.key))}</b>
+    <span>${curTxt}</span>${rec.key !== state.plan && !(rec.key === 'q5' && state.plan === 'tfm') && !(rec.key === 'q9' && state.plan === 'p90') ? `<button class="linkbtn" id="useRec">Use ${LEVEL_NAME(planLevelIndex(rec.key))}</button>` : ''}</div>`;
+  if ($('useRec')) $('useRec').onclick = () => setPlan(rec.key);
+  const al = alertsFor(gen);
+  $('alerts').innerHTML = al.length ? al.map((a, i) => `<div class="alert"><span>${a.text}</span>${a.extra ? `<button class="linkbtn" data-i="${i}">+${a.extra} ${a.res === 'sec' ? 'lane' : 'officer'}${a.extra > 1 ? 's' : ''}</button>` : '<em>at capacity</em>'}</div>`).join('')
+    : `<div class="ok">No window breaks the service wait even if demand lands on P90.</div>`;
+  $('alerts').querySelectorAll('button').forEach(b => b.onclick = () => { const a = al[+b.dataset.i]; adjust(a.res, a.key, a.extra); });
+}
+function drawPareto(pts) {
+  const cv = $('pareto'), r = cv.getBoundingClientRect(); if (!r.width) return;
+  const dpr = Math.min(2, devicePixelRatio || 1); cv.width = r.width * dpr; cv.height = r.height * dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const ml = 38, mr = 10, mt = 10, mb = 26, W = r.width - ml - mr, H = r.height - mt - mb;
+  const xs = pts.map(p => p.cost), ys = pts.map(p => (1 - p.late) * 100);
+  const x0 = Math.min(...xs) * 0.97, x1 = Math.max(...xs) * 1.03, y0 = Math.min(80, Math.floor(Math.min(...ys) / 5) * 5), y1 = 100;
+  const X = v => ml + (v - x0) / (x1 - x0) * W, Y = v => mt + H - (v - y0) / (y1 - y0) * H;
+  g.font = '500 9.5px Inter, sans-serif'; g.fillStyle = '#5a6a86'; g.strokeStyle = 'rgba(148,163,184,0.1)';
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (let v = y0; v <= y1; v += (y1 - y0 > 10 ? 5 : 2)) { g.beginPath(); g.moveTo(ml, Y(v)); g.lineTo(ml + W, Y(v)); g.stroke(); g.fillText(v + '%', ml - 5, Y(v)); }
+  g.setLineDash([3, 4]); g.strokeStyle = 'rgba(52,211,153,0.5)'; g.beginPath(); g.moveTo(ml, Y(COST.goal * 100)); g.lineTo(ml + W, Y(COST.goal * 100)); g.stroke(); g.setLineDash([]);
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  g.fillText(`€${fmtK(x0)}`, ml + 12, mt + H + 4); g.fillText(`€${fmtK(x1)}`, ml + W - 14, mt + H + 4); g.fillText('screening cost →', ml + W / 2, mt + H + 4);
+  const line = pts.filter(p => p.key !== 'hist');
+  g.strokeStyle = 'rgba(45,212,191,0.6)'; g.lineWidth = 1.5; g.beginPath();
+  line.forEach((p, i) => { const x = X(p.cost), y = Y((1 - p.late) * 100); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+  const sel = state.plan === 'tfm' ? 'q5' : state.plan === 'p90' ? 'q9' : state.plan;
+  for (const p of pts) {
+    const x = X(p.cost), y = Y((1 - p.late) * 100), on = p.key === sel;
+    g.fillStyle = p.key === 'hist' ? '#fb923c' : on ? '#fff' : '#2dd4bf';
+    g.beginPath(); g.arc(x, y, on ? 4.5 : 3, 0, Math.PI * 2); g.fill();
+    if (on) { g.strokeStyle = '#2dd4bf'; g.lineWidth = 2; g.stroke(); }
+    // After the day: where the actual demand put the same roster.
+    g.strokeStyle = p.key === 'hist' ? 'rgba(251,146,60,0.6)' : 'rgba(255,255,255,0.35)'; g.lineWidth = 1;
+    const ya = Y(Math.max(y0, (1 - p.actual) * 100)); g.beginPath(); g.moveTo(x - 3, ya); g.lineTo(x + 3, ya); g.stroke();
+    g.fillStyle = '#8b9bb6'; g.textBaseline = 'bottom';
+    g.fillText(p.key === 'hist' ? 'Hist.' : LEVEL_NAME(planLevelIndex(p.key)), x, y - 5);
+  }
+  g.textAlign = 'left'; g.textBaseline = 'top'; g.fillStyle = '#5a6a86';
+  g.fillText('% within 15 min, expected · – after the day', ml + 4, mt);
+}
+
+/* ---- left tabs and the scenario panel ---- */
+const LTABS = [['fc', 'Forecast'], ['plan', 'Roster & risk'], ['scn', 'What if']];
+function buildLeftTabs() {
+  $('ltabs').innerHTML = LTABS.map(([k, n]) => `<button data-k="${k}" role="tab">${n}</button>`).join('');
+  $('ltabs').querySelectorAll('button').forEach(b => b.onclick = () => setLeftTab(b.dataset.k));
+  setLeftTab(state.ltab || 'fc');
+}
+function setLeftTab(k) {
+  state.ltab = k;
+  $('ltabs').querySelectorAll('button').forEach(b => { b.classList.toggle('on', b.dataset.k === k); b.setAttribute('aria-selected', b.dataset.k === k); });
+  for (const [id] of LTABS) $('lp-' + id).classList.toggle('on', id === k);
+  if (k === 'plan' && gen) renderDecision();
+}
+function renderScenario() {
+  $('scn').innerHTML = [['', 'As forecast'], ...Object.entries(SCENARIO_DEFS).map(([k, v]) => [k, v.name])].map(([k, n]) =>
+    `<button class="${(SCN.kind || '') === k ? 'on' : ''}" data-k="${k}">${n}${k && SCENARIO_DEFS[k].demand ? '<small>demand</small>' : k ? '<small>capacity</small>' : ''}</button>`).join('');
+  $('scn').querySelectorAll('button').forEach(b => b.onclick = () => setScenario(b.dataset.k || null));
+  $('told').checked = SCN.told;
+  $('told').onchange = e => { SCN.told = e.target.checked; applyScenario(); };
+  const def = SCN.kind && SCENARIO_DEFS[SCN.kind];
+  $('toldWrap').style.display = def && def.demand ? '' : 'none';
+  if (!def) { $('scnInfo').innerHTML = `<div class="sub2">Pick a what-if to change the selected day. Demand scenarios were re-forecast by TimesFM with the changed schedule or event calendar; capacity scenarios change what the airport can process.</div>`; return; }
+  const d = gen.day, base = DATA.days[state.di];
+  let html = `<div class="scninfo"><b>${def.name}</b><p>${def.desc}</p>`;
+  if (def.demand) {
+    const before = base.t1.actual + base.t2.actual, after = d.t1.actual + d.t2.actual;
+    const fc0 = base.t1.joint_with_covariates + base.t2.joint_with_covariates;
+    const fc1 = TERMS.reduce((s, k) => s + base[k].joint_with_covariates * (base[k].scen ? base[k].scen[SCN.kind] : 1), 0);
+    html += `<div class="stat"><span>Demand in the simulation</span><b>${fmtInt(after)} <small>(${after >= before ? '+' : ''}${fmtInt(after - before)})</small></b></div>
+      <div class="stat"><span>TimesFM, told</span><b>${fmtInt(fc1)} <small>(${fc1 >= fc0 ? '+' : ''}${fmtInt(fc1 - fc0)})</small></b></div>
+      <div class="stat"><span>History only</span><b>${fmtInt(base.t1.univariate + base.t2.univariate)} <small>(cannot be told)</small></b></div>`;
+  }
+  const p = (paretoCache || []).find(x => x.key === (state.plan === 'tfm' ? 'q5' : state.plan === 'p90' ? 'q9' : state.plan));
+  if (p) html += `<div class="stat"><span>Security within ${COST.serviceWait.sec} min, this roster</span><b>${((1 - p.actual) * 100).toFixed(1)}%</b></div>`;
+  html += `<div class="stat"><span>Peak security wait</span><b>${TERMS.map(k => Math.round(outlook[state.plan].sec[k].peak) + 'm').join(' · ')}</b></div>
+    <div class="stat"><span>Peak passport wait</span><b>${TERMS.map(k => Math.round(outlook[state.plan].imm[k].peak) + 'm').join(' · ')}</b></div>
+    <div class="stat"><span>Peak taxi-rank wait</span><b>${TERMS.map(k => Math.round(outlook[state.plan].taxi[k].peak) + 'm').join(' · ')}</b></div></div>`;
+  $('scnInfo').innerHTML = html;
+}
+function setScenario(k) { SCN.kind = k; applyScenario(); }
+function applyScenario() {
+  genCache.clear();
+  loadDay(state.di);
+  renderScenario();
+  writeHash();
+}
 /* ---- right panel ---- */
 const RTABS = [['dep', 'Departures'], ['arr', 'Arrivals'], ['land', 'Landside'], ['com', 'Commercial'], ['ppl', 'People']];
 function buildRightTabs() {
@@ -374,15 +539,23 @@ function loadDay(i, at) {
   const keepT = at ?? (sim ? sim.t : 5 * 3600);
   state.di = i;
   gen = genDay(i);
+  outlookPlans.cache = {};
   rebuildPlans();
   resetSim();
-  renderDayPanel(); renderOutlook();
+  renderDayPanel(); renderOutlook(); renderDecision();
+  if (typeof renderStudio === 'function' && studioOpen()) renderStudio();
+  if ($('scnInfo') && SCN.kind) renderScenario();
   seek(keepT);
+  writeHash();
 }
 function setPlan(k) {
   state.plan = k;
+  outlookPlans.cache = {};
   rebuildPlans();
-  renderPlans(); renderOutlook(); renderDayPanel();
+  renderPlans(); renderOutlook(); renderDayPanel(); renderDecision();
+  if (SCN.kind) renderScenario();
+  scheduleRisk();
+  writeHash();
 }
 function seek(t) {
   t = clamp(t, DAY_START, SIM_END);
@@ -390,15 +563,37 @@ function seek(t) {
   state.seekTarget = t; state.seekFrom = sim.t;
   renderPlay();
 }
-/* Calendar markers: does the history-only roster break a resource's target? */
-function computeRisk(i) {
-  if (i >= DATA.days.length) return;
+/* Calendar markers: does the chosen roster break a resource's target on the day's actual demand? */
+let riskToken = 0;
+function scheduleRisk() { riskToken++; const tok = riskToken; calButtons().forEach(b => { b.querySelector('.risk').classList.remove('show'); b.title = b.dataset.title || b.title; }); setTimeout(() => computeRisk(0, tok), 400); }
+function computeRisk(i, tok = riskToken) {
+  if (tok !== riskToken || i >= DATA.days.length) return;
   const g = i === state.di ? gen : genDay(i), notes = [];
   for (const r of RESOURCES) for (const k of TERMS) {
-    const pk = r.outlook(g, k, r.plan(g, k, 'hist', 0)).peak;
+    const pk = r.outlook(g, k, r.plan(g, k, state.plan, state.offset[r.id][k])).peak;
     if (pk > r.threshold) notes.push(`${r.name} ${GEO[k].short} ${Math.round(pk)} min`);
   }
   const btn = calButtons()[i];
-  if (btn && notes.length) { btn.querySelector('.risk').classList.add('show'); btn.title += ` · history-only roster: ${notes.join(', ')}`; }
-  setTimeout(() => computeRisk(i + 1), 60);
+  if (btn) {
+    btn.dataset.title = btn.dataset.title || btn.title;
+    btn.querySelector('.risk').classList.toggle('show', notes.length > 0);
+    btn.title = btn.dataset.title + (notes.length ? ` · ${planLabel(state.plan)} roster: ${notes.join(', ')}` : '');
+  }
+  setTimeout(() => computeRisk(i + 1, tok), 40);
+}
+
+/* ---- shareable state in the URL hash: day, time, plan, scenario ---- */
+function writeHash() {
+  if (state.noHash) return;
+  const h = new URLSearchParams({ d: DATA.days[state.di].date, p: state.plan, s: SCN.kind || '', t: fmtHM(sim ? sim.t : 6 * 3600) });
+  history.replaceState(null, '', '#' + h.toString());
+}
+function readHash() {
+  const h = new URLSearchParams(location.hash.slice(1)), out = {};
+  const di = DATA.days.findIndex(d => d.date === h.get('d'));
+  if (di >= 0) out.di = di;
+  const p = h.get('p'); if (p && (p === 'hist' || p === 'tfm' || p === 'p90' || /^q\d+$/.test(p))) out.plan = p;
+  const s = h.get('s'); if (s && SCENARIO_DEFS[s]) out.scn = s;
+  const t = h.get('t'); if (t && /^\d\d:\d\d$/.test(t)) out.t = +t.slice(0, 2) * 3600 + +t.slice(3) * 60;
+  return out;
 }

@@ -275,8 +275,14 @@ function taxiDispatch(t) {
   if (T.nextSupply == null) T.nextSupply = t;
   while (T.nextSupply <= t) {
     let rate = 0;
-    for (const k of TERMS) rate += plans.taxi[k][slotOf(T.nextSupply)];
-    const perMin = rate / 30;
+    for (const k of TERMS) {
+      // Dispatcher surge per rank, as in the outlook model.
+      const ql = T.q[k].length;
+      T.surge = T.surge || {};
+      T.surge[k] = T.surge[k] ? ql > TAXI.surgeOff : ql > TAXI.surgeOn;
+      rate += plans.taxi[k][slotOf(T.nextSupply)] * (T.surge[k] ? TAXI.surgeX : 1);
+    }
+    const perMin = rate * taxiSupplyFactor() / 30;
     // Only call taxis in while the holding area has room.
     if (perMin > 0 && T.holding + (T.inbound || 0) < TAXI.holdingCap) {
       const west = R() < 0.5;

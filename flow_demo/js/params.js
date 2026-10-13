@@ -8,10 +8,11 @@ const DAY_START = 2.5 * 3600;           // 02:30, T1 security opens
 const DAY_END = 24 * 3600;
 const SIM_END = 25.5 * 3600;            // runs past midnight for late inbound flights
 const SLOT = 1800;                       // roster granularity (s)
-const LANE_RATE = 150;                   // pax per security lane-hour
+const LANE_RATE = 165;                   // pax per security lane-hour
 const SEC_SVC = 3600 / LANE_RATE;        // s per pax per lane
 const DESK_SVC = 90;                     // s per party at a check-in desk (longer for bigger parties)
-const UTIL = 0.9;                        // target utilisation when rostering any server
+const UTIL = 0.9;                        // target utilisation when rostering booths
+const SEC_UTIL = 0.95;                   // security lanes are rostered leaner, slot by slot; the surge rule covers spikes
 const SURGE = 3, SURGE_ON = 20, SURGE_OFF = 5;   // duty managers redeploy up to three lanes once the wait passes 20 min
 const DEP_SHARE = 0.5;                   // fallback departing share when the export has no directions
 const OPEN = { t1: 2.5 * 3600, t2: 3.5 * 3600 };   // published security opening times
@@ -34,15 +35,15 @@ const KINDS = [
 const H = o => Array.from({ length: 24 }, (_, h) => o[h] || 0);
 const MARKETS = {
   uk: { name: 'United Kingdom', short: 'UK', color: '#60a5fa', long: false, nonEU: 0.08, egate: 0, cta: true,
-    depW: H({ 6: 12, 7: 10, 8: 7, 9: 5, 10: 5, 11: 5, 12: 5, 13: 5, 14: 5, 15: 5, 16: 6, 17: 8, 18: 8, 19: 6, 20: 5, 21: 4, 22: 1 }),
+    depW: H({ 6: 9, 7: 9, 8: 8, 9: 6, 10: 5, 11: 5, 12: 5, 13: 5, 14: 5, 15: 5, 16: 6, 17: 8, 18: 8, 19: 6, 20: 5, 21: 4, 22: 1 }),
     dests: [['London Heathrow', 'LHR'], ['London Gatwick', 'LGW'], ['London Stansted', 'STN'], ['Manchester', 'MAN'], ['Birmingham', 'BHX'], ['Edinburgh', 'EDI'], ['Glasgow', 'GLA'], ['Bristol', 'BRS'], ['Newcastle', 'NCL'], ['Leeds Bradford', 'LBA']],
     aircraft: [['A320', 174], ['737-800', 189], ['A321neo', 212], ['ATR 72', 70]] },
   eu_city: { name: 'Europe · city & business', short: 'EU city', color: '#a78bfa', long: false, nonEU: 0.18, egate: 0.55,
-    depW: H({ 6: 14, 7: 10, 8: 6, 9: 5, 10: 5, 11: 6, 12: 5, 13: 5, 14: 5, 15: 5, 16: 6, 17: 6, 18: 6, 19: 5, 20: 4, 21: 2 }),
+    depW: H({ 6: 10, 7: 9, 8: 7, 9: 6, 10: 6, 11: 6, 12: 5, 13: 5, 14: 5, 15: 5, 16: 6, 17: 6, 18: 6, 19: 5, 20: 4, 21: 2 }),
     dests: [['Amsterdam', 'AMS'], ['Paris CDG', 'CDG'], ['Frankfurt', 'FRA'], ['Brussels', 'BRU'], ['Copenhagen', 'CPH'], ['Munich', 'MUC'], ['Zürich', 'ZRH'], ['Berlin', 'BER'], ['Rome', 'FCO'], ['Milan', 'MXP'], ['Lisbon', 'LIS'], ['Prague', 'PRG'], ['Vienna', 'VIE'], ['Kraków', 'KRK']],
     aircraft: [['A320', 174], ['737-800', 189], ['A321neo', 212]] },
   eu_sun: { name: 'Europe · sun & leisure', short: 'EU sun', color: '#fbbf24', long: false, nonEU: 0.06, egate: 0.6,
-    depW: H({ 6: 16, 7: 12, 8: 8, 9: 7, 10: 6, 11: 6, 12: 6, 13: 5, 14: 5, 15: 5, 16: 4, 17: 4, 18: 3, 19: 3, 20: 2 }),
+    depW: H({ 6: 11, 7: 10, 8: 9, 9: 8, 10: 7, 11: 6, 12: 6, 13: 5, 14: 5, 15: 5, 16: 5, 17: 4, 18: 4, 19: 3, 20: 2 }),
     dests: [['Málaga', 'AGP'], ['Alicante', 'ALC'], ['Faro', 'FAO'], ['Lanzarote', 'ACE'], ['Tenerife South', 'TFS'], ['Palma', 'PMI'], ['Barcelona', 'BCN'], ['Ibiza', 'IBZ'], ['Nice', 'NCE'], ['Fuerteventura', 'FUE']],
     aircraft: [['737-8200', 197], ['737-800', 189], ['A321neo', 212]] },
   na: { name: 'North America', short: 'N. America', color: '#34d399', long: true, nonEU: 0.55, egate: 0.5,
@@ -126,7 +127,9 @@ const BAGS = {
 const ROAD_VMAX = 9;
 const KERB_DWELL = { met: [60, 180], taxi: [45, 90], perBag: 20 };
 const CARPARK_CAP = { st_t1: 3000, st_t2: 2600, cpa_t1: 1000, surf_t2: 800, hb: 12000, dropgo: 120, staff: 4500 };
-const TAXI = { bays: { t1: 12, t2: 10 }, holdingCap: 300, rejoin: 0.3, load: [30, 60] };
+const TAXI = { bays: { t1: 17, t2: 14 }, holdingCap: 300, rejoin: 0.3, load: [25, 45],
+  // The rank dispatcher calls 25% more cabs once a rank queue passes 40 parties, until it falls below 10.
+  surgeOn: 40, surgeOff: 10, surgeX: 1.25 };
 const BUSES = [
   { id: 'city', name: 'City bus', headway: 8, from: 5, to: 23.5, cap: 90, color: '#22c55e' },
   { id: 'express', name: 'City express coach', headway: 6, from: 4.5, to: 24.5, cap: 55, color: '#16a34a' },
