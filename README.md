@@ -29,6 +29,8 @@ Scored 1–28 days ahead, on the 26 weekly origins (August 2025 to January 2026)
 | Arrivals/departures by market | **4.8–4.9%** | 6.6% | 6.0–6.3% | 9.6–10.1% | 11.5–11.8% |
 | Taxis, buses, car park | **3.9%** | 5.1% | 6.1% | 6.9% | 7.9% |
 
+![Backtest leaderboard](docs/leaderboard.png)
+
 ¹ Next period's published schedule × the passengers per scheduled movement on the same weekday over the last four weeks. It is the honest competitor, because it uses the schedule too.
 
 **Is the gain real?** The 95% bootstrap interval (over origins) for TimesFM-with-covariates minus each baseline excludes zero for every family on all days:
@@ -45,7 +47,7 @@ Scored 1–28 days ahead, on the 26 weekly origins (August 2025 to January 2026)
 | After calibration, 80% band | 80–83% |
 | After calibration, 90% band | 90–93% |
 
-The reliability diagram is in `outputs/calibration.png` and in the Forecast Studio.
+The reliability diagram ([docs/calibration.png](docs/calibration.png)) is also in the Forecast Studio.
 
 **Reconciliation.** MinT makes the hierarchy add up exactly (the base forecasts disagree by about 110 passengers a day) and lowers error slightly at every level:
 
@@ -187,6 +189,16 @@ The map is one schematic stacked by level: piers and gates, departures, roads, a
 | F, T, R, ? | Forecast Studio, tour, briefing, help |
 | C, P | Dot colours, performance meter |
 | Click | Follow a person (Esc to stop) |
+
+**March in the twin.** All 28 days, people following actual demand, rosters from each forecast:
+
+| Roster | Missed flights | Mean daily security peak | Worst taxi-rank wait |
+| --- | --- | --- | --- |
+| History only | 694 | 14.5 min | 117 min |
+| Covariates P50 | 249 | 5.1 min | 81 min |
+| Covariates P90 | 236 | 4.7 min | 19 min |
+
+About 235 of the missed flights under the P50 and P90 rosters fall on 27 March, the Friday the Easter school holidays start, when T1 security is short of lanes under any roster. That is a capacity problem, not a forecasting one.
 
 **Verification** (browser console):
 

@@ -295,7 +295,8 @@ function assignGates(G, deps, arrs, rnd, out) {
     const from = a ? a.onBlock - 300 : f.std - 75 * 60, to = f.dep + 300;
     if (a && f.std - a.onBlock > 3 * 3600) {
       stays.push({ dep: f, arr: a, from, to: a.onBlock + 45 * 60, part: 'in' });
-      stays.push({ dep: f, arr: a, from: f.std - 90 * 60, to, part: 'out' });
+      // Towed back on stand ahead of boarding; US preclearance flights board from about 70 min out.
+      stays.push({ dep: f, arr: a, from: f.std - (f.us ? 75 : 90) * 60, to, part: 'out' });
     } else stays.push({ dep: f, arr: a, from, to, part: 'all' });
   }
   // Late arrivals that stay overnight are towed off to remote parking after deplaning.
@@ -329,7 +330,7 @@ function assignGates(G, deps, arrs, rnd, out) {
     put(gate, s);
     if (f) { f.gate = gate; prevGate.set(f, gate); }
     if (a && s.part !== 'out') a.gate = gate;
-    if (s.part === 'in') tows.push({ dep: f, arr: a, from: a.onBlock + 45 * 60, to: f.std - 90 * 60 });
+    if (s.part === 'in') tows.push({ dep: f, arr: a, from: a.onBlock + 45 * 60, to: f.std - (f.us ? 75 : 90) * 60 });
   }
   // Long transatlantic turnarounds are towed away between flights: to a free remote stand
   // if one is left over once every flight has a stand, otherwise to parking off the plan.

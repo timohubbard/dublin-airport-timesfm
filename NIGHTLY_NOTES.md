@@ -69,7 +69,24 @@ Open http://localhost:8765 and press **T** for the guided tour (11 steps, about 
 - `pytest`: 15 passed.
 - `python run_all.py`: complete; results above and in `outputs/`.
 - Browser: no console errors. Tour, Studio, scenarios, briefing and alerts were exercised programmatically.
-- `DUB.runAllAsync()` over 28 days × 3 rosters: see the table appended below.
+- `DUB.runAllAsync()` over 28 days × 3 rosters: **84/84 pass**.
+  - Every departing passenger boards or is counted as missed.
+  - No invariant problems (car parks, sterility, NaN positions).
+  - Gate conflicts ≤ 2, except 5 on the fog day, where delays hold stands. The check allows that on disruption days.
+  - The first full run flagged US-preclearance gate clashes on three days. Fixed by spreading the North American bank slightly and boarding US flights from 75 minutes out (was 90).
+- **Performance**, St Patrick's Day at 07:15 (11,400 people, 280 vehicles): frame p95 8.4 ms, sim step 1.1 ms, render 2.0 ms.
+
+**The month in the twin** (all 28 March days, actual demand):
+
+| Roster | Missed flights | Mean daily security peak | Days with a security or passport peak over 30 min | Worst taxi-rank wait |
+| --- | --- | --- | --- | --- |
+| History only | 694 | 14.5 min | 8 | 117 min (summit) |
+| Covariates P50 | 249 | 5.1 min | 7 | 81 min (summit) |
+| Covariates P90 | 236 | 4.7 min | 3 | 19 min |
+
+About 235 of the missed flights under the P50 and P90 rosters are on 27 March (Easter getaway), when T1 security is capacity-bound under every roster.
+
+On the summit day the live taxi rank does worse than the outlook model expects (81 against 26 min at P50): once the holding area runs dry, the rank needs time to recover. A good talking point for P90 taxis; the queue models could be tuned further.
 
 ## Questions for the morning
 

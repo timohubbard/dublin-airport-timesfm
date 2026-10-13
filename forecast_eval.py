@@ -245,9 +245,10 @@ def plot_leaderboard(board: pd.DataFrame, comp: pd.DataFrame, path) -> None:
         ax.spines[["top", "right"]].set_visible(False)
         ax.yaxis.grid(True, color="#E2E8F0")
         ax.set_axisbelow(True)
-    axes[0].legend(frameon=False, fontsize=8, ncols=2, loc="upper left")
+    handles, labels = axes[0].get_legend_handles_labels()
     fig.suptitle("Rolling-origin backtest: TimesFM 3 against classical baselines", x=0.06, ha="left", fontsize=14)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    fig.legend(handles, labels, frameon=False, fontsize=9, ncols=4, loc="lower center")
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
@@ -297,6 +298,10 @@ def main() -> None:
     recon.to_csv(OUT / "reconciliation.csv", index=False)
     plot_leaderboard(board, comp, OUT / "leaderboard.png")
     plot_calibration(test, OUT / "calibration.png")
+    docs = ROOT / "docs"
+    docs.mkdir(exist_ok=True)
+    for name in ("leaderboard.png", "calibration.png"):
+        (docs / name).write_bytes((OUT / name).read_bytes())
     print(engine.report())
     print_summary(board, comp, recon, lam)
 

@@ -47,7 +47,7 @@ const MARKETS = {
     dests: [['Málaga', 'AGP'], ['Alicante', 'ALC'], ['Faro', 'FAO'], ['Lanzarote', 'ACE'], ['Tenerife South', 'TFS'], ['Palma', 'PMI'], ['Barcelona', 'BCN'], ['Ibiza', 'IBZ'], ['Nice', 'NCE'], ['Fuerteventura', 'FUE']],
     aircraft: [['737-8200', 197], ['737-800', 189], ['A321neo', 212]] },
   na: { name: 'North America', short: 'N. America', color: '#34d399', long: true, nonEU: 0.55, egate: 0.5,
-    depW: H({ 10: 8, 11: 14, 12: 14, 13: 12, 14: 10, 15: 10, 16: 8, 17: 4, 18: 3 }),
+    depW: H({ 9: 4, 10: 9, 11: 12, 12: 12, 13: 11, 14: 10, 15: 10, 16: 9, 17: 6, 18: 4 }),
     dests: [['New York JFK', 'JFK', 1], ['Boston', 'BOS', 1], ['Chicago O’Hare', 'ORD', 1], ['Washington Dulles', 'IAD', 1], ['Orlando', 'MCO', 1], ['Philadelphia', 'PHL', 1], ['Toronto', 'YYZ', 0]],
     aircraft: [['A321XLR', 184], ['A330-300', 317, 1], ['787-9', 290, 1]] },
   long: { name: 'Middle East & long-haul', short: 'Long-haul', color: '#f472b6', long: true, nonEU: 0.62, egate: 0.45,

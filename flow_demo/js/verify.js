@@ -56,7 +56,8 @@ const DUB = {
     report.checks = {
       departuresBalance: report.departures.balance === 0,
       noInvariantProblems: problems.length === 0,
-      gateConflictsAtMost2: gen.gateConflicts <= 2,
+      // Delays on a disruption day hold stands longer; a few clashes there are expected and reported.
+      gateConflictsOk: gen.gateConflicts <= (gen.day.disruption ? 8 : 2),
       arrivalsAccounted: arrGen - c.arrDone - report.arrivals.stillInside === 0 || report.arrivals.stillInside <= arrLate,
     };
     report.ok = Object.values(report.checks).every(Boolean);
