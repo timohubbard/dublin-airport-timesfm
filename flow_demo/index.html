@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DUB Operations Twin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css?v=928885">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="mark"><i></i></div>
+    <div style="min-width:0">
+      <div class="title">DUB Operations Twin</div>
+      <div class="sub">Departures, arrivals, transfers, baggage, ground transport and retail · rostered from TimesFM 3 forecasts · <b>synthetic data</b></div>
+    </div>
+  </div>
+  <div class="transport">
+    <button class="iconbtn" id="playBtn" aria-label="Play or pause"></button>
+    <div class="clock"><div class="t num" id="clock">--:--</div><div class="d" id="clockDate"></div></div>
+    <div class="seg" id="speedSeg" aria-label="Simulation speed"></div>
+  </div>
+  <div class="status">
+    <span class="pill live" id="livePill"><i></i><span id="liveTxt">Simulating</span></span>
+    <span class="pill num" id="paxPill">0 people on site</span>
+  </div>
+</header>
+
+<main>
+  <aside class="panel left">
+    <h3>Scenario day <small>March 2026 holdout</small></h3>
+    <div class="cal" id="cal"></div>
+    <div class="cal-key">
+      <span><i style="background:var(--warn)"></i>Event</span>
+      <span><i style="background:#94a3b8"></i>Fog</span>
+      <span><i class="tri"></i>History-only roster breaks its target</span>
+    </div>
+    <div class="dayinfo" id="dayinfo"></div>
+
+    <h3>Forecast vs actual</h3>
+    <div class="tabs small" id="ftabs"></div>
+    <table class="mtab" id="ftab"></table>
+
+    <h3>Passenger mix <small id="mixTotal"></small></h3>
+    <div class="mixbar" id="mixbar"></div>
+    <div class="mixk" id="mixk"></div>
+
+    <h3>Rosters built from</h3>
+    <div class="plans" id="plans"></div>
+    <div class="hint">Security lanes, immigration officers, taxi call-ins and the Holiday Blue shuttle are rostered per 30 min from the chosen forecast. The people, cars and bags follow the day's <b>actual</b> demand. Keys <b>1 2 3</b> switch live.</div>
+
+    <details class="adjwrap">
+      <summary>Manual adjustments</summary>
+      <div class="adj" id="adj"></div>
+    </details>
+
+    <h3>Full-day outlook <small>peak wait by roster</small></h3>
+    <table class="ctab" id="ctab"></table>
+
+    <div class="foot">
+      Volumes come from <code>forecast_dublin_airport.py</code>, <code>forecast_markets.py</code> and <code>forecast_operations.py</code> and are invented, not daa figures. Outlet, lounge, carousel and car-park names come from daa's public terminal map; their capacities and every spend figure are illustrative. The layout is a schematic stack (departures, arrivals, baggage hall, roads), not to scale. Traveller types and travel modes are behaviour rules, not observed data.
+    </div>
+  </aside>
+
+  <section class="stage">
+    <div class="mapwrap" id="mapwrap">
+      <canvas id="map"></canvas>
+      <div class="ov tl">
+        <div class="seg glass" id="presetSeg" style="border-radius:10px"></div>
+        <div class="glass note">Filled dots depart · rings arrive · scroll to zoom, drag to pan, click anyone to follow</div>
+        <div class="glass follow" id="follow"></div>
+      </div>
+      <div class="ov tr"><div class="seg glass" id="colorSeg" style="border-radius:10px"></div></div>
+      <div class="ov bl"><div class="glass legend" id="legend"></div></div>
+      <div class="ov br">
+        <button class="glass zbtn" id="zin" aria-label="Zoom in">+</button>
+        <button class="glass zbtn" id="zout" aria-label="Zoom out">−</button>
+        <button class="glass zbtn" id="zfit" aria-label="Fit map" style="font-size:13px">⤢</button>
+      </div>
+      <div class="glass seeking" id="seeking"><span id="seekTxt">Fast-forwarding</span><div class="bar"><i id="seekBar"></i></div></div>
+      <div class="glass perf" id="perf"></div>
+      <div class="empty" id="empty"><div>No forecast data found.<br><br>Run <code>python forecast_dublin_airport.py</code><br>then <code>python flow_demo/export_flow_data.py</code></div></div>
+    </div>
+    <div class="timeline">
+      <div class="tlbar"><div class="seg" id="resSeg"></div><div class="tlk" id="tlKey"></div></div>
+      <div class="tlgrid">
+        <div class="tlc"><div class="tlh"><b id="tl1Title">Terminal 1</b></div><canvas id="tl1"></canvas></div>
+        <div class="tlc"><div class="tlh"><b id="tl2Title">Terminal 2</b></div><canvas id="tl2"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel right">
+    <div class="tabs" id="rtabs"></div>
+    <div id="tab-dep" class="tabpane">
+      <h3>Security, live</h3>
+      <div id="cards"></div>
+      <h3>Departures <small>both terminals</small></h3>
+      <div class="board"><div class="boardh"><span>Time</span><span>Destination</span><span>Gate</span><span>Status</span></div><div id="board"></div></div>
+    </div>
+    <div id="tab-arr" class="tabpane">
+      <h3>Passport control, live</h3>
+      <div id="immCards"></div>
+      <h3>Baggage belts</h3>
+      <table class="mtab" id="belts"></table>
+      <h3>Arrivals <small>both terminals</small></h3>
+      <div class="board"><div class="boardh"><span>Time</span><span>From</span><span>Gate</span><span>Status</span></div><div id="arrBoard"></div></div>
+    </div>
+    <div id="tab-land" class="tabpane">
+      <h3>Taxi ranks</h3>
+      <div id="taxiCards"></div>
+      <h3>Car parks</h3>
+      <div id="carparks"></div>
+      <h3>Kerbs, buses and shuttles</h3>
+      <div id="kerbs"></div>
+    </div>
+    <div id="tab-com" class="tabpane">
+      <h3>Spend by category <small>illustrative €</small></h3>
+      <div id="spend"></div>
+      <h3>Busiest outlets <small>footfall today</small></h3>
+      <table class="mtab" id="outlets"></table>
+      <h3>Lounges</h3>
+      <div id="lounges"></div>
+    </div>
+    <div id="tab-ppl" class="tabpane">
+      <h3>Where people are now</h3>
+      <table class="where" id="where"></table>
+      <h3>Today so far</h3>
+      <div id="tally"></div>
+    </div>
+  </aside>
+</main>
+
+<script src="flow_data.js?v=928885"></script>
+<script src="js/core.js?v=928885"></script>
+<script src="js/params.js?v=928885"></script>
+<script src="js/geometry.js?v=928885"></script>
+<script src="js/facilities.js?v=928885"></script>
+<script src="js/schedule.js?v=928885"></script>
+<script src="js/roster.js?v=928885"></script>
+<script src="js/sim.js?v=928885"></script>
+<script src="js/flow_dep.js?v=928885"></script>
+<script src="js/flow_arr.js?v=928885"></script>
+<script src="js/flow_other.js?v=928885"></script>
+<script src="js/commerce.js?v=928885"></script>
+<script src="js/baggage.js?v=928885"></script>
+<script src="js/landside.js?v=928885"></script>
+<script src="js/render_map.js?v=928885"></script>
+<script src="js/render_charts.js?v=928885"></script>
+<script src="js/ui.js?v=928885"></script>
+<script src="js/main.js?v=928885"></script>
+<script src="js/verify.js?v=928885"></script>
+</body>
+</html>

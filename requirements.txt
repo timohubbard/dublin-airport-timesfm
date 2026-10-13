@@ -1,0 +1,9 @@
+numpy>=1.26.4
+pandas>=2.2.0
+matplotlib>=3.8.0
+
+# TimesFM 3. MLX is the Apple silicon backend documented upstream; it is not
+# in the 3.0.1 PyPI release, so install from the GitHub tree that provides
+# timesfm[mlx]. PyTorch (timesfm[torch]) also works — the script tries MLX
+# first, then PyTorch.
+timesfm[mlx] @ git+https://github.com/google-research/timesfm.git@e51928e27119cb17bebc005be2696b75e0a9e688
