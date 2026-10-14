@@ -60,9 +60,9 @@ def test_directions_and_landside_invariants(data):
 
 def test_schedule_is_published_not_realised(data):
     """The schedule covariate must not reveal on-the-day outcomes."""
-    f = data.frame
-    fog = f.index[f["disruption_name"].eq("Fog and flow restrictions")][0]
-    assert f.loc[fog, "terminal_1_operated_movements"] < 0.9 * f.loc[fog, "terminal_1_scheduled_movements"]
+    f = data.frame.set_index("date")
+    eowyn = pd.Timestamp("2025-01-24")
+    assert f.loc[eowyn, "terminal_1_operated_movements"] < 0.8 * f.loc[eowyn, "terminal_1_scheduled_movements"]
     # Correlation of schedule with passengers is high but far from exact.
     ratio = f["terminal_1_passengers"] / f["terminal_1_scheduled_movements"]
     assert ratio.std() / ratio.mean() > 0.03

@@ -43,11 +43,14 @@ from forecast_operations import (
 
 CACHE = ROOT / "outputs" / "cache"
 GROUPS = ("schedule", "events", "calendar")
+WX_GROUP = "weather"
 GROUP_LABELS = {
     "schedule": "Published schedule",
     "events": "Event calendar",
     "calendar": "School holidays & travel direction",
+    "weather": "Weather forecast",
 }
+WX_MODELS = ("ifs", "aifs")
 
 
 @dataclass
@@ -92,6 +95,7 @@ class Family:
     primary: np.ndarray               # (k, n) schedule-like covariate per target, for the planner baseline
     extra_row: int | None = None      # pf row that the "+1 route" scenario adds to
     labels: list[str] = field(default_factory=list)
+    dates: list = field(default_factory=list)
 
 
 def _f32(*rows) -> np.ndarray:
@@ -111,7 +115,10 @@ def families(data: Data) -> list[Family]:
         f["terminal_2_operated_movements"],
         f["cancelled_pct"],
     )
-    delay = _f32(f["avg_departure_delay_min"], f["cancelled_pct"])
+    # Observed weather is known after each day: past-only, for every family.
+    wx_obs = _f32(f["gust_max_kt"], f["lvp_hours"], f["rain_mm"], f["snow_ice"])
+    po_terminal = np.vstack([po_terminal, wx_obs])
+    delay = np.vstack([_f32(f["avg_departure_delay_min"], f["cancelled_pct"]), wx_obs])
     out = [
         Family(
             "terminals",
@@ -184,7 +191,58 @@ def families(data: Data) -> list[Family]:
             labels=lkeys,
         )
     )
+    dates = list(data.frame["date"].dt.date)
+    for fam in out:
+        fam.dates = dates
     return out
+
+
+# --- weather forecast covariates, as issued -------------------------------------
+
+# Fixed scaling so the weather rows sit on similar ranges (no data-dependent fit).
+WX_SHIFT = np.array([0.0, 0.0, 0.0, 0.0, 1000.0])[:, None]
+WX_SCALE = np.array([20.0, 5.0, 6.0, 10.0, 15.0])[:, None]
+
+
+class Weather:
+    """Weather rows for the past-and-future covariates, built as of an origin.
+
+    Context days carry the day-ahead forecast that was issued for them;
+    horizon day j carries the forecast issued before the origin (lead j+1,
+    from the archive up to 7 days), and climatology beyond that.
+    """
+
+    def __init__(self, dates: list):
+        import weather_data as wx
+
+        self.wx = wx
+        self.dates = dates
+        self.fc = wx.load_forecast_features()
+        self.clim = wx.climatology()
+        self.lead1 = {m: self._scale(wx.lead1_series(dates, m, self.fc, self.clim)) for m in WX_MODELS}
+        self._clim_rows = self._scale(np.stack([self.clim.loc[d.timetuple().tm_yday, list(wx.FC_FEATURES)].to_numpy(float) for d in dates], axis=1))
+
+    @staticmethod
+    def _scale(a: np.ndarray) -> np.ndarray:
+        return ((a - WX_SHIFT) / WX_SCALE).astype(np.float32)
+
+    def rows(self, model: str, origin: int, horizon: int, neutral: bool = False) -> np.ndarray:
+        ctx = self.lead1[model][:, :origin]
+        if neutral:
+            hz = self._clim_rows[:, origin:origin + horizon]
+        else:
+            hz = self._scale(self.wx.forecast_asof(self.dates[origin], horizon, model, self.fc, self.clim))
+        return np.concatenate([ctx, hz], axis=1)
+
+
+def pf_for(fam: Family, origin: int, horizon: int, wx: Weather | None = None, model: str | None = None,
+           drop: tuple[str, ...] = ()) -> np.ndarray:
+    """Past-and-future covariates for one origin: the static rows (with any
+    groups neutralised) plus, when a weather model is given, its rows."""
+    base = neutral_pf(fam, origin, horizon, tuple(g for g in drop if g != WX_GROUP))[:, :origin + horizon]
+    if model is None:
+        return base
+    return np.vstack([base, wx.rows(model, origin, horizon, neutral=WX_GROUP in drop)])
 
 
 # --- TimesFM with a disk cache -------------------------------------------------
@@ -302,39 +360,46 @@ def neutral_pf(fam: Family, origin: int, horizon: int, drop: tuple[str, ...]) ->
     return pf
 
 
-def run_models(engine: Engine, fam: Family, origin: int, joint_plain: bool = True) -> dict:
-    """The three TimesFM variants for one family and origin."""
+def run_models(engine: Engine, fam: Family, origin: int, joint_plain: bool = True, wx: Weather | None = None) -> dict:
+    """TimesFM variants for one family and origin: history only, joint, with
+    schedule/events/calendar covariates, and the same plus each weather model."""
+    h = engine.horizon
     out = {
         "univariate": engine.univariate(fam.y, origin),
-        "covariates": engine.joint(fam.y, origin, fam.pf, fam.po),
+        "covariates": engine.joint(fam.y, origin, pf_for(fam, origin, h), fam.po),
     }
     if joint_plain:
         out["joint"] = engine.joint(fam.y, origin)
+    if wx is not None:
+        for m in WX_MODELS:
+            out[f"cov_{m}"] = engine.joint(fam.y, origin, pf_for(fam, origin, h, wx, m), fam.po)
     return out
 
 
-def shapley(engine: Engine, fam: Family, origin: int) -> tuple[np.ndarray, dict[str, np.ndarray]]:
-    """Exact Shapley values of the three covariate groups for the point forecast.
+def shapley(engine: Engine, fam: Family, origin: int, wx: Weather | None = None, model: str | None = None):
+    """Exact Shapley values of the covariate groups for the point forecast.
 
-    Runs the covariate model on all 2^3 combinations of known/neutralised
-    groups. The base is the model with every group neutralised; base plus the
-    three contributions equals the full forecast exactly.
+    Runs the covariate model on every combination of known/neutralised
+    groups (8 runs, or 16 with a weather group). The base is the model with
+    every group neutralised; base plus the contributions equals the full
+    forecast exactly.
     """
     from itertools import combinations
     from math import factorial
 
     h = engine.horizon
+    groups = GROUPS + ((WX_GROUP,) if model else ())
     value = {}
-    for r in range(len(GROUPS) + 1):
-        for known in combinations(GROUPS, r):
-            drop = tuple(g for g in GROUPS if g not in known)
-            pf = neutral_pf(fam, origin, h, drop)
+    for r in range(len(groups) + 1):
+        for known in combinations(groups, r):
+            drop = tuple(g for g in groups if g not in known)
+            pf = pf_for(fam, origin, h, wx, model, drop)
             value[frozenset(known)] = engine.joint(fam.y, origin, pf, fam.po)[0]
-    n = len(GROUPS)
+    n = len(groups)
     phi = {}
-    for g in GROUPS:
+    for g in groups:
         total = np.zeros_like(value[frozenset()])
-        others = [x for x in GROUPS if x != g]
+        others = [x for x in groups if x != g]
         for r in range(n):
             for subset in combinations(others, r):
                 w = factorial(r) * factorial(n - r - 1) / factorial(n)

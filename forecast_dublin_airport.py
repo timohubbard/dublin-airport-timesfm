@@ -46,6 +46,7 @@ import numpy as np
 import pandas as pd
 
 from real_data import market_targets, monthly_factor
+from weather_data import disruption
 
 CHECKPOINT = "google/timesfm-3.0-pytorch"
 HISTORY_START = date(2023, 1, 1)
@@ -60,8 +61,7 @@ HORIZON_IRREGULAR = (
     (date(2026, 3, 4), date(2026, 3, 5), "Atlantic Aviation Summit"),
     (date(2026, 3, 24), date(2026, 3, 25), "European route launch"),
 )
-FOG_DAY = date(2026, 3, 11)
-RESERVED_MONTH_DAYS = {(3, 4), (3, 5), (3, 11), (3, 24), (3, 25)}
+RESERVED_MONTH_DAYS = {(3, 4), (3, 5), (3, 24), (3, 25)}
 
 T1_BASE_MOVEMENTS = 345.0
 T2_BASE_MOVEMENTS = 255.0
@@ -221,15 +221,11 @@ def build_dataset(seed: int = SEED) -> pd.DataFrame:
             event_kind[position] = "irregular"
             day += timedelta(days=1)
 
-    delay = rng.gamma(2.5, 5.0, size=n)
-    quiet = np.flatnonzero(event_intensity == 0.0)
-    n_disruptions = int(round(0.035 * n))
-    disrupted = rng.choice(quiet, size=n_disruptions, replace=False)
-    delay[disrupted] = rng.uniform(70.0, 110.0, size=n_disruptions)
-    delay[index[FOG_DAY]] = 100.0
-    disruption_name = np.array([""] * n, dtype=object)
-    disruption_name[delay >= 70.0] = "Weather disruption"
-    disruption_name[index[FOG_DAY]] = "Fog and flow restrictions"
+    # Delays and disruptions follow Dublin Airport's real weather on each day
+    # (Met Éireann and METAR observations, weather_data.disruption).
+    wx = disruption(date_objs)
+    delay = rng.gamma(2.5, 5.0, size=n) + wx["delay_extra"].to_numpy()
+    disruption_name = wx["name"].to_numpy(dtype=object)
 
     dow = dates.dayofweek.to_numpy()
     season = np.sin(2 * np.pi * (dates.dayofyear.to_numpy() - 110) / 365.25)
@@ -260,8 +256,7 @@ def build_dataset(seed: int = SEED) -> pd.DataFrame:
         sched[key] = base * np.sqrt(weekly)[dow] * (1.0 + 0.18 * season) * trend * (1.0 + capacity_lift)
 
     # On the day: weather cancels flights; a few ad-hoc flights are added.
-    cancelled = np.clip((delay - 45.0) / 450.0, 0.0, 0.12) + rng.uniform(0.0, 0.006, size=n)
-    cancelled[index[FOG_DAY]] = 0.16
+    cancelled = wx["cancel"].to_numpy() + rng.uniform(0.0, 0.006, size=n)
     operated = {k: v * (1.0 - cancelled) * np.exp(rng.normal(0.0, 0.004, size=n)) for k, v in sched.items()}
 
     # Load factor: the rest of the weekly demand pattern, the season, school
@@ -318,6 +313,11 @@ def build_dataset(seed: int = SEED) -> pd.DataFrame:
             "school_holiday": holiday.astype(np.int64),
             "avg_departure_delay_min": np.round(delay, 1),
             "disruption_name": disruption_name,
+            "gust_max_kt": wx["gust_kt"].to_numpy(),
+            "lvp_hours": wx["lvp_hours"].to_numpy(),
+            "rain_mm": wx["rain_mm"].to_numpy(),
+            "snow_ice": wx["snow_ice"].astype(int).to_numpy(),
+            "frost": wx["frost"].astype(int).to_numpy(),
             "cso_month": [d.to_period("M") in cso_months for d in dates],
         }
     )
@@ -542,7 +542,7 @@ def score_forecasts(forecast: pd.DataFrame) -> pd.DataFrame:
         "all_days": pd.Series(True, index=forecast.index),
         "irregular_events": forecast["event_kind"].eq("irregular"),
         "seasonal_events": forecast["event_kind"].eq("seasonal"),
-        "fog_day": forecast["disruption_name"].eq("Fog and flow restrictions"),
+        "weather_disruption": forecast["disruption_name"].ne(""),
     }
     records = []
     for series, group in forecast.groupby("series", sort=False):
@@ -602,7 +602,8 @@ def plot_forecast(frame: pd.DataFrame, forecast: pd.DataFrame, path: Path) -> No
 
     shown = frame[(frame["date"] >= "2026-02-08") & (frame["date"] <= "2026-03-28")].copy()
     origin = pd.Timestamp(CONTEXT_END) + pd.Timedelta(days=1)
-    fog = pd.Timestamp(FOG_DAY)
+    horizon = frame[frame["date"] >= origin]
+    fog = horizon.loc[horizon["avg_departure_delay_min"].idxmax(), "date"]
     colors = {
         "univariate": "#C2410C",
         "joint": "#64748B",
@@ -785,7 +786,7 @@ def _draw_terminal(ax, shown, forecast, column, origin, fog, colors, annotate: b
         )
         _callout(
             ax,
-            "Masked\nfog delay not passed in",
+            "Masked\nweather delay not passed in",
             fog,
             float(future.loc[future["date"].eq(fog), "actual"].iloc[0]),
             ceiling,
@@ -818,11 +819,11 @@ def _callout(ax, text, xy_date, xy_value, text_value, color="#1E3A8A", ha="cente
 
 def _draw_error_bars(ax, forecast: pd.DataFrame, colors: dict) -> None:
     event = forecast["event_kind"].isin(["irregular", "seasonal"])
-    fog = forecast["disruption_name"].eq("Fog and flow restrictions")
+    fog = forecast["disruption_name"].ne("")
     slices = (
         ("Ordinary days", ~event & ~fog),
         ("Event days", event),
-        ("Fog day, 11 Mar", fog),
+        ("Weather-disrupted days", fog),
     )
     models = (
         ("univariate", "History only", colors["univariate"]),

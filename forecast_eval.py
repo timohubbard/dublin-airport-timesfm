@@ -32,12 +32,19 @@ import baselines as bl
 import calibration as cal
 import metrics as mx
 from forecast_dublin_airport import HORIZON_DAYS, ROOT
-from pipeline import Data, Engine, backtest_origins, build_data, families, run_models
+from pipeline import Data, Engine, Weather, backtest_origins, build_data, families, run_models
+from weather_risk import RiskModel
 from reconcile import hierarchy, mint_projection, reconcile, shrunk_covariance
 
 OUT = ROOT / "outputs"
-TFM_MODELS = ("univariate", "joint", "covariates")
+TFM_MODELS = ("univariate", "joint", "covariates", "cov_ifs", "cov_aifs", "gate_ifs", "gate_aifs")
+WX_VARIANTS = ("covariates", "cov_ifs", "cov_aifs", "gate_ifs", "gate_aifs")
+RISK_FLAG = 0.2  # forecast probability of a weather disruption that counts as "high risk"
 MODEL_LABELS = {
+    "cov_ifs": "TimesFM 3 + schedule, events & ECMWF IFS weather",
+    "cov_aifs": "TimesFM 3 + schedule, events & ECMWF AIFS weather",
+    "gate_ifs": "TimesFM 3, IFS weather when a disruption is forecast",
+    "gate_aifs": "TimesFM 3, AIFS weather when a disruption is forecast",
     "covariates": "TimesFM 3 + schedule & events",
     "joint": "TimesFM 3, joint, no covariates",
     "univariate": "TimesFM 3, history only",
@@ -59,6 +66,7 @@ def series_name(key: tuple) -> str:
 
 def run_backtest(data: Data, engine: Engine, origins: list[int]) -> pd.DataFrame:
     fams = families(data)
+    wx = Weather(fams[0].dates)
     f = data.frame
     event = f["event_intensity"].to_numpy() > 0
     disruption = f["disruption_name"].fillna("").ne("").to_numpy()
@@ -72,13 +80,13 @@ def run_backtest(data: Data, engine: Engine, origins: list[int]) -> pd.DataFrame
     for oi, origin in enumerate(origins):
         steps = np.arange(origin, origin + h)
         for fam in fams:
-            tfm = run_models(engine, fam, origin)
+            tfm = run_models(engine, fam, origin, wx=wx)
             for i, key in enumerate(fam.keys):
                 y = fam.y[i].astype(float)
                 hist = y[:origin]
                 scale = mx.snaive_scale(hist[-365:])
                 name = series_name(key)
-                preds = {m: (tfm[m][0][i], tfm[m][1][i]) for m in TFM_MODELS}
+                preds = {m: (tfm[m][0][i], tfm[m][1][i]) for m in TFM_MODELS if m in tfm}
                 pkey = (fam.name, name)
                 if pkey not in hw_params or oi % 13 == 0:
                     hw_params[pkey] = bl.hw_fit(hist)
@@ -106,7 +114,51 @@ def run_backtest(data: Data, engine: Engine, origins: list[int]) -> pd.DataFrame
     out["date"] = pd.to_datetime(dates[out["t"].to_numpy()])
     out["event"] = event[out["t"].to_numpy()]
     out["disruption"] = disruption[out["t"].to_numpy()]
-    return out
+    for m in ("ifs", "aifs"):
+        out[f"wxrisk_{m}"] = weather_risk_flags(out, m)
+    out["wxrisk"] = out["wxrisk_ifs"] | out["wxrisk_aifs"]
+    return add_gated(out)
+
+
+def add_gated(bt: pd.DataFrame) -> pd.DataFrame:
+    """Gated models: the no-weather covariate forecast, except on days in the
+    first week that the weather model's own risk forecast flags, where the
+    weather-aware forecast is used. Weather is noise on calm days and signal
+    on stormy ones; the gate lets each model speak where it knows something."""
+    key = ["origin", "t", "family", "series"]
+    base = bt[bt["model"] == "covariates"].set_index(key)
+    parts = [bt]
+    for m in ("ifs", "aifs"):
+        wxm = bt[bt["model"] == f"cov_{m}"].set_index(key).reindex(base.index)
+        use = (base[f"wxrisk_{m}"] & (base["h"] < 7)).to_numpy()
+        g = base.copy()
+        cols = ["point", *QCOLS]
+        g.loc[use, cols] = wxm.loc[use, cols].to_numpy()
+        g["model"] = f"gate_{m}"
+        parts.append(g.reset_index())
+    return pd.concat(parts, ignore_index=True)
+
+
+def weather_risk_flags(bt: pd.DataFrame, model: str = "ifs") -> np.ndarray:
+    """True where the as-issued forecast (lead h+1 <= 7) gave a weather
+    disruption probability of RISK_FLAG or more. Uses the risk model fitted
+    on the period before weather_risk.SPLIT only."""
+    import weather_data as wxd
+    from weather_risk import design, predict, LEAD_BUCKETS
+
+    rm = RiskModel().fit()
+    fc = rm.fc[rm.fc["model"] == model]
+    keys = bt[["date", "h"]].drop_duplicates().assign(lead=lambda x: x["h"] + 1)
+    keys = keys[keys["lead"] <= 7].assign(day=lambda x: x["date"].dt.date)
+    m = keys.merge(fc, left_on=["day", "lead"], right_on=["date", "lead"], suffixes=("", "_fc")).dropna(subset=list(wxd.FC_FEATURES))
+    p = np.zeros(len(m))
+    for lo, hi in LEAD_BUCKETS:
+        sel = m["lead"].between(lo, hi).to_numpy()
+        if sel.any():
+            x = design(m.loc[sel, ["date_fc", *wxd.FC_FEATURES]].rename(columns={"date_fc": "date"}))
+            p[sel] = predict(rm.w[(model, lo, "any")], x)
+    flagged = set(map(tuple, m.loc[p >= RISK_FLAG, ["date", "h"]].itertuples(index=False, name=None)))
+    return np.array([(d, h) in flagged for d, h in zip(bt["date"], bt["h"])])
 
 
 QCOLS = [f"q{int(l * 100):02d}" for l in cal.MODEL_LEVELS]
@@ -114,15 +166,27 @@ CAL_COLS = [f"c{int(round(l * 100)):02d}" for l in cal.LEVELS]
 
 
 def calibrate(bt: pd.DataFrame, calib_origins: set[int]) -> tuple[pd.DataFrame, dict]:
-    """Fit conformal shifts per (family, series, model) on the calibration
-    origins; apply them to every row. Returns the frame and the shifts."""
+    """Conformal scales per (family, series, model), fitted the way they would
+    be in production: each scored origin uses every forecast whose outcome
+    was already known at that origin (online / rolling calibration), so the
+    bands keep up with the seasons. Calibration-half origins use the
+    calibration half. Returns the frame and the final (all-origin) scales."""
     shifts = {}
     parts = []
+    first_test = min(set(bt["origin"]) - calib_origins) if set(bt["origin"]) - calib_origins else None
     for (fam, series, model), g in bt[bt["model"].isin(TFM_MODELS)].groupby(["family", "series", "model"], sort=False):
-        fit_rows = g[g["origin"].isin(calib_origins)]
-        s = cal.fit(fit_rows["actual"], fit_rows[QCOLS].to_numpy(), fit_rows["h"], fit_rows["event"])
-        shifts[(fam, series, model)] = s
-        cq = cal.apply(g[QCOLS].to_numpy(), g["h"].to_numpy(), s, g["event"].to_numpy())
+        grp = cal.day_group(g["event"], g["wxrisk"])
+        fit = lambda rows: cal.fit(rows["actual"], rows[QCOLS].to_numpy(), rows["h"], cal.day_group(rows["event"], rows["wxrisk"]))
+        cq = np.zeros((len(g), len(CAL_COLS)))
+        early = g["origin"].isin(calib_origins).to_numpy()
+        s_cal = fit(g[early])
+        cq[early] = cal.apply(g.loc[early, QCOLS].to_numpy(), g.loc[early, "h"].to_numpy(), s_cal, grp[early])
+        for o in sorted(set(g["origin"]) - calib_origins):
+            known = g[g["t"] < o]
+            sel = (g["origin"] == o).to_numpy()
+            s_o = fit(known)
+            cq[sel] = cal.apply(g.loc[sel, QCOLS].to_numpy(), g.loc[sel, "h"].to_numpy(), s_o, grp[sel])
+        shifts[(fam, series, model)] = fit(g)
         parts.append(pd.DataFrame(cq, index=g.index, columns=CAL_COLS))
     calq = pd.concat(parts)
     return bt.join(calq), shifts
@@ -135,6 +199,8 @@ SLICES = {
     "disruption": lambda d: d["disruption"].to_numpy(),
     "week1": lambda d: (d["h"] < 7).to_numpy(),
     "week4": lambda d: (d["h"] >= 21).to_numpy(),
+    "disruption_wk1": lambda d: (d["disruption"] & (d["h"] < 7)).to_numpy(),
+    "wx_risk": lambda d: d["wxrisk"].to_numpy(),
 }
 
 
@@ -164,20 +230,23 @@ def leaderboard(test: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def comparisons(test: pd.DataFrame) -> pd.DataFrame:
-    """WAPE(covariates) - WAPE(other) with bootstrap intervals."""
+def comparisons(test: pd.DataFrame, ref_model: str = "covariates", others=("univariate", "joint", *bl.BASELINES),
+                slices=("all", "event", "ordinary")) -> pd.DataFrame:
+    """WAPE(ref_model) - WAPE(other) with bootstrap intervals."""
     rows = []
     for fam, gf in test.groupby("family", sort=False):
-        for sl in ("all", "event", "ordinary"):
+        for sl in slices:
             part = gf[SLICES[sl](gf)]
-            ref = part[part["model"] == "covariates"].set_index(["origin", "t", "series"])
-            for other in ("univariate", "joint", *bl.BASELINES):
+            ref = part[part["model"] == ref_model].set_index(["origin", "t", "series"])
+            if ref.empty:
+                continue
+            for other in others:
                 o = part[part["model"] == other].set_index(["origin", "t", "series"]).reindex(ref.index)
                 d, lo, hi = mx.bootstrap_diff(
                     ref.index.get_level_values("origin"),
                     ref["point"] - ref["actual"], o["point"] - o["actual"], ref["actual"],
                 )
-                rows.append({"family": fam, "slice": sl, "vs": other, "diff": d, "lo": lo, "hi": hi,
+                rows.append({"family": fam, "slice": sl, "ref": ref_model, "vs": other, "diff": d, "lo": lo, "hi": hi,
                              "n_days": int(ref.index.get_level_values("t").nunique())})
     return pd.DataFrame(rows)
 
@@ -228,9 +297,9 @@ def plot_leaderboard(board: pd.DataFrame, comp: pd.DataFrame, path) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    order = ["covariates", "joint", "univariate", "schedule", "holt_winters", "snaive7", "snaive364"]
-    colors = {"covariates": "#1D4ED8", "joint": "#64748B", "univariate": "#C2410C", "schedule": "#0F766E",
-              "holt_winters": "#A16207", "snaive7": "#94A3B8", "snaive364": "#CBD5E1"}
+    order = ["cov_ifs", "cov_aifs", "covariates", "univariate", "schedule", "holt_winters", "snaive7"]
+    colors = {"cov_ifs": "#1E3A8A", "cov_aifs": "#7C3AED", "covariates": "#3B82F6", "joint": "#64748B", "univariate": "#C2410C",
+              "schedule": "#0F766E", "holt_winters": "#A16207", "snaive7": "#94A3B8", "snaive364": "#CBD5E1"}
     fams = list(FAMILY_LABELS)
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.8), facecolor="white")
     for ax, sl, title in ((axes[0], "all", "All days"), (axes[1], "event", "Event days")):
@@ -289,13 +358,24 @@ def main() -> None:
     bt, _ = calibrate(bt, calib)
     test = bt[~bt["origin"].isin(calib)]
     board = leaderboard(test)
-    comp = comparisons(test)
+    comp = pd.concat([
+        comparisons(test),
+        comparisons(test, "cov_ifs", ("covariates", "cov_aifs"), ("all", "week1", "disruption", "disruption_wk1", "wx_risk")),
+        comparisons(test, "cov_aifs", ("covariates",), ("all", "week1", "disruption", "disruption_wk1", "wx_risk")),
+        comparisons(test, "gate_ifs", ("covariates", "gate_aifs"), ("all", "disruption", "disruption_wk1", "wx_risk")),
+        comparisons(test, "gate_aifs", ("covariates",), ("all", "disruption", "disruption_wk1", "wx_risk")),
+    ], ignore_index=True)
     recon, _, lam = evaluate_reconciliation(bt, calib)
+    import weather_risk
+    risk = pd.DataFrame(RiskModel().fit().scores)
+    skill = weather_risk.model_skill()
     OUT.mkdir(exist_ok=True)
     bt.to_csv(OUT / "backtest.csv.gz", index=False)
     board.to_csv(OUT / "leaderboard.csv", index=False)
     comp.to_csv(OUT / "comparisons.csv", index=False)
     recon.to_csv(OUT / "reconciliation.csv", index=False)
+    risk.to_csv(OUT / "weather_risk.csv", index=False)
+    skill.to_csv(OUT / "weather_skill.csv", index=False)
     plot_leaderboard(board, comp, OUT / "leaderboard.png")
     plot_calibration(test, OUT / "calibration.png")
     docs = ROOT / "docs"
@@ -304,20 +384,28 @@ def main() -> None:
         (docs / name).write_bytes((OUT / name).read_bytes())
     print(engine.report())
     print_summary(board, comp, recon, lam)
+    print("\nWeather disruption risk, Brier skill vs climatology on the later half (above 0 = useful):")
+    print(risk.pivot_table(index=["target", "leads"], columns="model", values="brier_skill").round(3).to_string())
+    print("\nRaw weather forecast skill at Dublin, later half:")
+    print(skill.pivot_table(index="lead", columns="model", values=["wind_mae_kt", "rain_brier"]).round(3).to_string())
 
 
 def print_summary(board: pd.DataFrame, comp: pd.DataFrame, recon: pd.DataFrame, lam: float) -> None:
     pd.set_option("display.width", 160)
-    wide = board[board["slice"].isin(["all", "event"])].pivot_table(index=["family", "slice"], columns="model", values="wape", sort=False) * 100
+    wide = board[board["slice"].isin(["all", "event", "disruption", "disruption_wk1"])].pivot_table(index=["family", "slice"], columns="model", values="wape", sort=False) * 100
     print("\nWAPE % on unseen origins (lower is better):")
     print(wide.round(2).to_string())
-    cov = board[(board["slice"] == "all") & board["model"].eq("covariates")][["family", "cov80_raw", "cov80", "cov90", "width80", "wql"]]
+    cov = board[(board["slice"] == "all") & board["model"].isin(["covariates", "gate_aifs"])][["family", "model", "cov80_raw", "cov80", "cov90", "width80", "wql"]]
     print("\nCovariate model bands (target 80% / 90%):")
     print(cov.round(3).to_string(index=False))
     print("\nCovariates minus other model, WAPE points, with 95% bootstrap interval (negative = covariates better):")
-    c = comp[comp["slice"].isin(["all", "event"])].copy()
+    c = comp[comp["slice"].isin(["all", "event"]) & comp["ref"].eq("covariates")].copy()
     c["txt"] = c.apply(lambda r: f"{r['diff'] * 100:+.2f} [{r['lo'] * 100:+.2f}, {r['hi'] * 100:+.2f}]", axis=1)
     print(c.pivot_table(index=["family", "slice"], columns="vs", values="txt", aggfunc="first", sort=False).to_string())
+    print("\nWeather: with-weather model minus other, WAPE points [95% interval] (negative = weather helps):")
+    w = comp[comp["ref"].isin(["cov_ifs", "cov_aifs", "gate_ifs", "gate_aifs"])].copy()
+    w["txt"] = w.apply(lambda r: f"{r['diff'] * 100:+.2f} [{r['lo'] * 100:+.2f}, {r['hi'] * 100:+.2f}]", axis=1)
+    print(w.pivot_table(index=["family", "slice"], columns=["ref", "vs"], values="txt", aggfunc="first", sort=False).to_string())
     print(f"\nReconciliation (MinT, shrinkage lambda {lam:.2f}):")
     print(recon.round(4).to_string(index=False))
 

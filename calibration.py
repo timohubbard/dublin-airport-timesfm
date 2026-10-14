@@ -14,9 +14,9 @@ for c = 20, 40, 60, 80 and 90% (the 90% band is built from the model's
 10-90% spread). The median is left as TimesFM returned it, so calibration
 cannot import a bias from the calibration months. Factors are learned per
 series, per horizon bucket (days 1-13, 14-28) and separately for days with a
-known event (Mondrian conformal): the calendar says in advance which days
-those are and their errors are larger. The output has eleven levels,
-0.05 ... 0.95, sorted to stay monotone.
+known event and for days the weather forecast flags as high disruption risk
+(Mondrian conformal): both are known in advance and their errors are
+larger. The output has eleven levels, 0.05 ... 0.95, sorted to stay monotone.
 """
 
 from __future__ import annotations
@@ -28,17 +28,18 @@ LEVELS = np.array([0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95])
 # Central bands: coverage, model lower index, model upper index, output lower/upper index.
 BANDS = ((0.2, 3, 5, 4, 6), (0.4, 2, 6, 3, 7), (0.6, 1, 7, 2, 8), (0.8, 0, 8, 1, 9), (0.9, 0, 8, 0, 10))
 BUCKETS = ((0, 14), (14, 10_000))
+GROUPS = 3  # 0 ordinary, 1 known event, 2 weather forecast flags high disruption risk
 MIN_SAMPLES = 40
 
 
-def bucket_of(h, event=None) -> np.ndarray:
-    """Horizon bucket, plus len(BUCKETS) on known event days."""
+def bucket_of(h, group=None) -> np.ndarray:
+    """Horizon bucket, offset by len(BUCKETS) x the day's group."""
     h = np.asarray(h)
     out = np.zeros(len(h), dtype=int)
     for i, (lo, hi) in enumerate(BUCKETS):
         out[(h >= lo) & (h < hi)] = i
-    if event is not None:
-        out = out + len(BUCKETS) * np.asarray(event, bool)
+    if group is not None:
+        out = out + len(BUCKETS) * np.asarray(group, int)
     return out
 
 
@@ -50,15 +51,15 @@ def _scores(actual, q, lo_i, hi_i) -> np.ndarray:
     return np.maximum((med - actual) / down, (actual - med) / up)
 
 
-def fit(actual, q, h, event=None) -> np.ndarray:
+def fit(actual, q, h, group=None) -> np.ndarray:
     """Scale factors s[cell, band]. q is (n, 9). A cell with too few samples
     falls back to its horizon bucket, then to all samples."""
     actual = np.asarray(actual, float)
     q = np.asarray(q, float)
-    cells = bucket_of(h, event)
+    cells = bucket_of(h, group)
     hb = bucket_of(h)
-    scales = np.ones((2 * len(BUCKETS), len(BANDS)))
-    for ci in range(2 * len(BUCKETS)):
+    scales = np.ones((GROUPS * len(BUCKETS), len(BANDS)))
+    for ci in range(GROUPS * len(BUCKETS)):
         mask = cells == ci
         if mask.sum() < MIN_SAMPLES:
             mask = hb == ci % len(BUCKETS)
@@ -72,10 +73,10 @@ def fit(actual, q, h, event=None) -> np.ndarray:
     return scales
 
 
-def apply(q, h, scales, event=None) -> np.ndarray:
+def apply(q, h, scales, group=None) -> np.ndarray:
     """Calibrated quantiles at LEVELS for model quantiles q (n, 9)."""
     q = np.asarray(q, float)
-    cells = bucket_of(h, event)
+    cells = bucket_of(h, group)
     med = q[:, 4]
     out = np.zeros((len(q), len(LEVELS)))
     out[:, 5] = med
@@ -84,6 +85,12 @@ def apply(q, h, scales, event=None) -> np.ndarray:
         out[:, out_lo] = med - s * (med - q[:, lo_i])
         out[:, out_hi] = med + s * (q[:, hi_i] - med)
     return np.maximum(np.sort(out, axis=1), 0.0)
+
+
+def day_group(event, wxrisk) -> np.ndarray:
+    """0 ordinary, 1 known event, 2 high weather-disruption risk (not an event)."""
+    event = np.asarray(event, bool)
+    return np.where(event, 1, np.where(np.asarray(wxrisk, bool), 2, 0))
 
 
 def raw_levels(q) -> np.ndarray:

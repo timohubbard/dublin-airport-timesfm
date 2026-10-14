@@ -14,6 +14,7 @@ Per terminal, market and arrivals/departures node the day record carries:
   uq                    the same for the history-only model
   plan                  {hist, tfm, p90}: what each roster preset plans for
   why                   Shapley split of the covariate forecast (base + groups)
+  variants              point forecasts without weather and with IFS / AIFS weather
   scen                  re-forecast multipliers for the three scenarios
 
 Run python run_all.py (or forecast_eval.py then forecast_final.py) first.
@@ -68,6 +69,10 @@ def node(series: dict, day: int) -> dict:
         "why": {k: v[day] for k, v in series["why"].items()},
         "scen": {k: v[day] for k, v in series["scen"].items()},
     }
+    if "variants" in series:
+        out["variants"] = {k: v[day] for k, v in series["variants"].items()}
+    if "dayahead" in series:
+        out["da"] = {"point": series["dayahead"]["point"][day], "q": series["dayahead"]["q"][day]}
     for name, i in LEVELS_INDEX.items():
         out[name] = q[i]
     return out
@@ -141,6 +146,8 @@ def main() -> None:
             },
         }
         rec["staff"] = {shift: num(f"staff_{shift}") for shift in ("early", "mid", "late", "night")}
+        if "weather" in bundle:
+            rec["weather"] = bundle["weather"]["days"][i]
         days.append(rec)
 
     # Recent actuals for the fan charts: terminals, markets, landside.
@@ -154,6 +161,7 @@ def main() -> None:
         "history": bundle["history"],
         "context": {"start": context_dates_start, "series": bundle["context"]},
         "labels": {k: v["label"] for k, v in S.items()},
+        "weather": {k: v for k, v in bundle.get("weather", {}).items() if k != "days"},
         "days": days,
     }
     OUT.write_text("window.FLOW_DATA = " + json.dumps(payload, separators=(",", ":")) + ";\n")

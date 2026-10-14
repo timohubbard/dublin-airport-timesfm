@@ -253,8 +253,15 @@ def build_landside_dataset(frame: pd.DataFrame, markets: pd.DataFrame, direction
             st_by_persona[term][persona][t] += dep * split["short_term"] / size
             series["hb_entries"][t] += dep * split["holiday_blue"] / size
             hb_by_persona[persona][t] += dep * split["holiday_blue"] / size
+    # Rain moves people from buses and walking to taxis (about +6% taxi trips
+    # on wet days in the New York studies cited in the README).
+    wet = (frame["rain_mm"].to_numpy() >= 5.0) if "rain_mm" in frame else np.zeros(n, bool)
     for key in series:
         series[key] = np.maximum(0, np.rint(series[key] * np.exp(ar_noise(rng, n, 0.03))))
+        if key.startswith("taxi_pickups"):
+            series[key] = np.rint(series[key] * np.where(wet, 1.06, 1.0))
+        elif key.startswith("bus_pax"):
+            series[key] = np.rint(series[key] * np.where(wet, 0.97, 1.0))
 
     def stock(entries_by_persona: dict, cap: int, trip_scale: float = 1.0) -> tuple[np.ndarray, ...]:
         pmfs = {p: trip_pmf(max(1.2, TRIP_DAYS[p] * trip_scale)) for p in PERSONAS}
