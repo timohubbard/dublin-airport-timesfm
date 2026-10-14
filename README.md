@@ -18,7 +18,7 @@ A forecasting system for a **synthetic** Dublin Airport, built on [TimesFM 3](ht
 | **Explain** | Exact Shapley values of the covariate groups (schedule, events, calendar, weather), from 8 or 16 TimesFM runs per family. |
 | **Weather** | Disruption risk from ECMWF IFS (physics) and ECMWF AIFS (AI), scored against climatology. The weather forecast is used in TimesFM only when its own risk model flags a day. |
 | **Ask what if** | TimesFM re-forecasts the day if an event is announced, 10% of flights are cancelled, or a route is added. Fog and storm scenarios run through the runway model. |
-| **Describe what happened** | Type a scenario in words ("three T1 lanes fail at 7am", "fog until 10", "a crash on the M1"). It becomes the twin's shocks (Claude interprets it if `scenario_server.py` is running, a built-in parser if not). The day then runs with and without them, and the twin shows where the effect appears first and how it spreads through the airport. |
+| **Describe what happened** | Type a scenario in words ("three T1 lanes fail at 7am", "fog until 10", "a crash on the M1"). It becomes the twin's shocks (an LLM interprets it if `scenario_server.py` is running: Gemini by default, or Claude; a built-in parser if not). The day then runs with and without them, and the twin shows where the effect appears first and how it spreads through the airport. |
 | **Three horizons** | The 28-day plan, the evening-before refresh for the week ahead, and an hour-by-hour forecast for today that updates live (a nowcast) as passengers arrive. |
 | **Real layout** | Piers, gates, stands and walking distances from OpenStreetMap. Passengers allow for the walk to far gates, and the twin draws a true-to-scale map of Dublin with the live aircraft and people on it. |
 | **Decide** | The twin rosters security, passport control, taxis and shuttles from any forecast quantile. It shows each roster's cost against its risk before the day, then what actually happened. |
@@ -200,17 +200,18 @@ TimesFM 3 weights are under the [TimesFM Non-Commercial License v1.0](https://hu
 | `reconcile.py` | MinT with Schäfer–Strimmer shrinkage |
 | `forecast_eval.py`, `forecast_final.py`, `run_all.py` | Backtest, production forecast, orchestration |
 | `airport_geometry.py` | Real piers, gates, stands and walking distances from OpenStreetMap; writes `flow_demo/js/airport_geo.js` |
-| `scenario_server.py` | Serves the twin; Claude interprets scenarios and writes the impact briefing (optional) |
+| `scenario_server.py` | Serves the twin; Gemini (or Claude) interprets scenarios and writes the impact briefing (optional) |
 | `flow_demo/` | The operations twin (below) |
 
 ## Operations twin (`flow_demo/`)
 
 ```bash
 python -m http.server 8765 --directory flow_demo   # then open http://localhost:8765
-python scenario_server.py                          # the same, plus Claude for scenarios: http://localhost:8770
+python scenario_server.py                          # the same, plus Gemini for scenarios: http://localhost:8770
+python scenario_server.py --provider claude        # or Claude
 ```
 
-You can also open `flow_demo/index.html` straight from disk; there is no build step. `scenario_server.py` needs `pip install anthropic` and an Anthropic API key (`ANTHROPIC_API_KEY` or an `ant auth login` profile). The key stays on the server. Without it, the twin uses its built-in parser.
+You can also open `flow_demo/index.html` straight from disk; there is no build step. `scenario_server.py` uses Gemini by default: it needs `pip install google-genai` and `GEMINI_API_KEY` (model `gemini-4-argon`; set `GEMINI_MODEL` to use another). With `--provider claude` it needs `pip install anthropic` and `ANTHROPIC_API_KEY` (model `claude-opus-5-5`, or `CLAUDE_MODEL`). The key stays on the server. Without one, the twin uses its built-in parser.
 
 Each dot is one person:
 
@@ -267,13 +268,13 @@ The map stacks the terminals by level: departures, roads, arrivals, the baggage 
   - **Landside:** road congestion, bus strike, taxi shortage, car park closed.
   - **Piers:** pier closed, travelators out.
   - Every shock can be edited (hours, size) or removed, then re-run.
-- **Interpreter:** Claude (`claude-opus-5-5`, structured output against the same schema) when `scenario_server.py` is running; otherwise a rule-based parser. Claude only sets the direct shocks; it never invents knock-on effects.
+- **Interpreter:** an LLM when `scenario_server.py` is running: Gemini (`gemini-4-argon`) by default, or Claude (`claude-opus-5-5`) with `--provider claude`, both with structured output against the same schema. Otherwise a rule-based parser. The model only sets the direct shocks; it never invents knock-on effects.
 - **The knock-on effects are simulated, not scripted.** The shocks are wired into the twin itself, so a lane failure becomes a queue, then missed flights, then less time and money spent airside. Fog becomes runway holding, then more aircraft on remote stands, a later passport-control peak, busier reclaim and a later taxi rush.
 - **Impact view:** the day runs twice under the same roster, without and with the scenario, using common random numbers. Generation uses separate seeded streams per terminal, phase and flight, so nothing changes until the scenario does. Each part of the airport is measured every quarter hour. The view shows:
   - a ripple diagram, numbered in the order the effect reached each part, with a time scrubber;
   - a heat strip of the change through the day;
   - the day's KPIs with and without the scenario;
-  - a briefing (Claude's, from the measured numbers, or a template);
+  - a briefing (the LLM's, from the measured numbers, or a template);
   - the hourly forecast with and without the scenario.
 - **The forecast, when told:** cancellations and added flights scale TimesFM's own re-forecasts (10% cancelled; +6 movements); demand changes apply the stated change. The URL keeps the scenario text, so a view can be shared.
 

@@ -35,7 +35,9 @@ const IMPACT_NODES = [
 ];
 const IMPACT_EDGES = [['land', 'chk'], ['chk', 'sec'], ['sec', 'shop'], ['shop', 'gate'], ['gate', 'rwy'], ['rwy', 'stand'], ['stand', 'imm'], ['imm', 'bag'], ['bag', 'taxi'], ['taxi', 'car'], ['car', 'land'], ['imm', 'trf'], ['trf', 'gate'], ['rwy', 'trf']];
 
-/* ---------------- interpreter: Claude via scenario_server.py, else built in ---------------- */
+/* ---------------- interpreter: an LLM via scenario_server.py (Gemini or Claude), else built in ---------------- */
+const llmName = s => (s && s.provider === 'claude' ? 'Claude' : 'Gemini');
+const llmOn = () => !!(IMPACT.server && IMPACT.server.llm);
 async function checkServer() {
   if (IMPACT.server != null) return IMPACT.server;
   try { const r = await fetch('/api/health', { cache: 'no-store' }); IMPACT.server = r.ok ? await r.json() : false; } catch (e) { IMPACT.server = false; }
@@ -43,7 +45,7 @@ async function checkServer() {
 }
 async function interpret(text) {
   const srv = await checkServer();
-  if (srv && srv.claude) {
+  if (srv && srv.llm) {
     try {
       const d = gen.day;
       const r = await fetch('/api/interpret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, context: {
@@ -54,7 +56,7 @@ async function interpret(text) {
       if (r.ok) {
         const j = await r.json();
         const shocks = (j.shocks || []).filter(s => SHOCK_TYPES[s.type]).map(s => ({ ...s, from: clamp(+s.from || 0, 0, 26), to: clamp(+s.to || 26, 0, 26), magnitude: +s.magnitude, src: text }));
-        return { shocks, notes: j.notes || [], title: j.title || text.slice(0, 64), narrative: j.reasoning || '', source: `Claude (${j.model})` };
+        return { shocks, notes: j.notes || [], title: j.title || text.slice(0, 64), narrative: j.reasoning || '', source: `${llmName(srv)} (${j.model})` };
       }
     } catch (e) { /* fall back */ }
   }
@@ -197,7 +199,7 @@ function kpiTable(R) {
     return `<tr><td class="l">${name}</td><td>${f(a, d, u)}</td><td>${f(b, d, u)}</td><td>${ch}</td></tr>`;
   }).join('') + '</table>';
 }
-/* A plain-language account from the measured differences (Claude's, if the server is running, replaces it). */
+/* A plain-language account from the measured differences (the LLM's, if the server is running, replaces it). */
 function templateBrief(R) {
   const bits = [];
   const fmtT = i => fmtHM(R.t[i]);
@@ -215,7 +217,7 @@ function templateBrief(R) {
 }
 async function requestBrief(R) {
   const srv = await checkServer();
-  if (!srv || !srv.claude) return;
+  if (!srv || !srv.llm) return;
   try {
     const nodes = R.nodes.filter(n => n.first >= 0).map(n => ({ part: n.name, measure: n.desc, first: fmtHM(R.t[n.first]), worst: fmtHM(R.t[n.peak]), changeAtWorst: +n.delta[n.peak].toFixed(1) }));
     const kpis = Object.fromEntries(KPI_ROWS.map(([name, get]) => [name, { before: get(R.base.kpi), after: get(R.scn.kpi) }]));
@@ -228,7 +230,7 @@ async function requestBrief(R) {
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function briefHtml(R) {
   if (R.brief) return `<div class="brieftxt">${esc(R.brief).replace(/\n+/g, '</p><p>').replace(/^/, '<p>')}</p></div><div class="sub2">Written by ${esc(R.briefModel)} from the measured differences above.</div>`;
-  return `<p>${templateBrief(R)}</p><div class="sub2">Summarised from the measured differences.${IMPACT.server && IMPACT.server.claude ? ' Asking Claude for a briefing…' : ' Run <code>python scenario_server.py</code> for a Claude-written briefing.'}</div>`;
+  return `<p>${templateBrief(R)}</p><div class="sub2">Summarised from the measured differences.${llmOn() ? ` Asking ${llmName(IMPACT.server)} for a briefing…` : ' Run <code>python scenario_server.py</code> for an LLM-written briefing.'}</div>`;
 }
 
 /* ---------------- the impact view ---------------- */
@@ -329,9 +331,9 @@ function renderScenarioBox() {
   $('scnGo').onclick = () => simulateText(el.value);
   el.onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) simulateText(el.value); };
   checkServer().then(s => {
-    $('scnSrc').innerHTML = s && s.claude ? `Interpreted by <b>Claude</b> (${esc(s.model)}) via scenario_server.py`
-      : s ? `Built-in parser: scenario_server.py is running but Claude is not available <span class="sub2">(${esc((s.error || '').slice(0, 120))})</span>`
-      : `Interpreted by the built-in parser. <span class="sub2">Run <code>python scenario_server.py</code> with an Anthropic API key for Claude.</span>`;
+    $('scnSrc').innerHTML = s && s.llm ? `Interpreted by <b>${llmName(s)}</b> (${esc(s.model)}) via scenario_server.py`
+      : s ? `Built-in parser: scenario_server.py is running but ${llmName(s)} is not available <span class="sub2">(${esc((s.error || '').slice(0, 120))})</span>`
+      : `Interpreted by the built-in parser. <span class="sub2">Run <code>python scenario_server.py</code> with a Gemini (or Anthropic) API key for an LLM.</span>`;
   });
   renderShockList();
 }

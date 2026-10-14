@@ -3,9 +3,10 @@
    Scenario simulator: describe what happened, see it ripple.
 
    1. Interpret   free text becomes a list of shocks, each with a type, a
-                  terminal, a time window and a size. Claude does this when
-                  scenario_server.py is running (structured output against
-                  the same schema); otherwise a built-in parser does it.
+                  terminal, a time window and a size. An LLM (Gemini or
+                  Claude) does this when scenario_server.py is running
+                  (structured output against the same schema); otherwise a
+                  built-in parser does it.
                   Either way the shocks are shown and can be edited.
    2. Simulate    the shocks are wired into the twin itself: security lanes,
                   screeners, check-in, baggage screening, passport control,
