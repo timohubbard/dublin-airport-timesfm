@@ -29,11 +29,11 @@ Scored 1–28 days ahead, on the 26 weekly origins (August 2025 to January 2026)
 
 | Series | TimesFM + schedule, events, gated weather | TimesFM, history only | Planner's method¹ | Holt-Winters | Last week |
 | --- | --- | --- | --- | --- | --- |
-| Terminal passengers | **2.7%** | 4.1% | 3.9% | 7.1% | 7.9% |
-| … on event days | **2.8%** | 13.8% | 6.9% | 10.3% | 11.3% |
-| Passengers by market | **3.8%** | 5.5–5.6% | 4.5–4.7% | 8.8–9.0% | 10.0–10.2% |
-| Arrivals/departures by market | **4.6–4.8%** | 6.2–6.4% | 5.8% | 9.5–9.8% | 11.0–11.3% |
-| Taxis, buses, car park | **4.0%** | 5.3% | 6.1% | 7.2% | 8.2% |
+| Terminal passengers | **2.6%** | 3.8% | 3.6% | 6.8% | 7.6% |
+| … on event days | **3.3%** | 12.6% | 6.3% | 8.9% | 10.3% |
+| Passengers by market | **3.7–3.8%** | 5.2–5.4% | 4.2–4.5% | 8.5–8.7% | 9.8–9.9% |
+| Arrivals/departures by market | **4.7%** | 6.1% | 5.7% | 9.4–9.5% | 10.9–11.0% |
+| Taxis, buses, car park | **4.1%** | 5.2% | 6.3% | 7.0% | 8.0% |
 
 ![Backtest leaderboard](docs/leaderboard.png)
 
@@ -43,16 +43,16 @@ Scored 1–28 days ahead, on the 26 weekly origins (August 2025 to January 2026)
 
 | Comparison | Difference, WAPE points [95% interval] |
 | --- | --- |
-| vs the planner's method | −1.2 [−1.5, −0.8] |
-| vs history-only TimesFM | −1.4 [−1.9, −1.0] |
-| vs history only, on event days | −11.0 [−12.7, −9.2] |
+| vs the planner's method | −1.0 [−1.2, −0.7] |
+| vs history-only TimesFM | −1.2 [−1.6, −0.9] |
+| vs history only, on event days | −9.3 [−10.5, −8.1] |
 
 **Are the bands honest?**
 
 | Band | Share of actuals inside |
 | --- | --- |
-| 80% band, after calibration | 77–81% |
-| 90% band, after calibration | 88–91% |
+| 80% band, after calibration | 79–82% |
+| 90% band, after calibration | 89–91% |
 
 - The calibration is *online*: each scored origin uses every forecast whose outcome was already known.
 - Coverage is a little under target in winter, when real weather makes errors larger than in the calmer months the bands learned from.
@@ -60,13 +60,15 @@ Scored 1–28 days ahead, on the 26 weekly origins (August 2025 to January 2026)
 
 **Reconciliation.**
 - MinT makes the hierarchy add up exactly; the base forecasts disagree by about 110 passengers a day.
-- Since real weather entered the history, this coherence costs a little accuracy: terminals 2.71% → 2.81%, markets 3.84% → 3.90%. Correlated disruption-day errors make the shrunk covariance less helpful.
+- Since real weather entered the history, this coherence costs a little accuracy: terminals 2.62% → 2.69%, markets 3.74% → 3.78%. Correlated disruption-day errors make the shrunk covariance less helpful.
 - Coherent rosters are worth it, but it is a trade-off, not a free gain.
 
 **March 2026 holdout** (one month, the data the demo replays):
-- **Plan made on 1 March:** 2.0% error on Terminal 1, 2.1% on Terminal 2, against 4.8% and 4.2% from history only.
-- **Refreshed the evening before each day**, with the latest passengers and the latest weather forecast: error across all 37 series falls from 5.4% to 3.4%.
-- Across all series, 77% of days fell inside the 80% band.
+- **Plan made on 1 March:** 3.4% error on Terminal 1, 1.8% on Terminal 2, against 5.0% and 5.0% from history only.
+- **Refreshed the evening before each day**, with the latest passengers and the latest weather forecast: pooled error across the series falls from 5.3% to 3.4%.
+- 72% of series-days fell inside the 80% band: a hard month, below the backtest's 79–82%.
+- **One known problem:** T2's long-haul market (Middle East and Asia, about 1,000 passengers a day) is planned at roughly three times its actual level, because its history has a level shift. It is left out of the pooled figures above. The evening-before refresh recovers most of it.
+- **The real calendar moved March:** with the real holidays, the synthetic March is a different draw. The plan's pooled error was 4.2% before the calendar change and is 5.3% now, while the 26-origin backtest improved (terminals 2.71% → 2.62%). One month is a small sample.
 
 ### Why these numbers are believable
 
@@ -114,13 +116,13 @@ Met Éireann's archived warnings end in August 2023, so warnings are not used.
 
 | Model | All days | Disrupted days, 1–7 days ahead |
 | --- | --- | --- |
-| No weather | 2.71% | 9.83% |
-| + IFS weather, always on | 2.85% | 9.46% |
-| + AIFS weather, always on | 2.78% | 9.21% |
-| **AIFS weather, only when its risk model flags the day** | **2.70%** | **9.30%** |
+| No weather | 2.62% | 8.60% |
+| + IFS weather, always on | 2.72% | 8.24% |
+| + AIFS weather, always on | 2.66% | 8.13% |
+| **AIFS weather, only when its risk model flags the day** | **2.61%** | **8.12%** |
 
-- **Always-on weather hurts on ordinary days.** It is noise there: +0.07 to +0.15 points, intervals excluding zero.
-- **The gated model is never worse.** It gains on disrupted days in the first week: −0.53 points [−1.59, −0.01] for terminals and −0.51 [−1.37, −0.05] for landside.
+- **Always-on weather hurts on ordinary days.** It is noise there: +0.10 points for IFS [0.02, 0.18] and +0.04 for AIFS [−0.02, 0.10].
+- **The gated model is never worse.** It gains on disrupted days in the first week: −0.48 points [−1.32, −0.05] for terminals and −0.45 [−1.22, −0.03] for landside.
 - **The sample is small:** only 9 such days are in the scored half, so treat the gain as promising, not proven.
 - **The production model is gated AIFS,** chosen on the calibration origins with a tie-break fixed in advance.
 - **Weather is a 1–7 day signal,** which is why the twin's rosters can be switched to the plan refreshed the day before.
@@ -143,6 +145,17 @@ Met Éireann's archived warnings end in August 2023, so warnings are not used.
 The synthetic daily series are scaled with smooth monthly factors so that every month's total matches TAM08 exactly. Each market's monthly passengers match TAM07's country mix (mapping in `real_data.py`), and the departing share follows TAM07's direction split.
 
 The split between terminals (Europe city and UK 55/45 across T1/T2; sun routes all T1; North America and long-haul all T2) is the demo's assumption, not daa's allocation.
+
+**The calendar is real.**
+- Ireland's bank holidays come from the [Nager.Date](https://date.nager.at) API, including St Brigid's Day, which the old rules missed.
+- Irish school breaks are the Department of Education's standardised Christmas, Easter and mid-term dates (`calendar_data.py`, `reference_data/calendar/`). Summers are approximate.
+- The synthetic demand responds to the same flags, so this makes the simulated world more realistic rather than proving a gain.
+
+**Real flights.** `real_flights.py` backfills every flight at Dublin from the [OpenSky Network](https://opensky-network.org) (ADS-B; research use; a free API client) into `reference_data/flights/eidw_daily.csv`, by airline group and market. So far it covers 26 January to 31 March 2026, and it resumes each time it runs until 2023 is reached.
+- **Coverage:** OpenSky's commercial movements come to 101% of CSO's commercial flights in February and March 2026, within CSO's rounding. It sees essentially every flight.
+- **Against the synthetic schedule:** the level matches (real passenger-airline movements average 100% of synthetic), but the day-to-day correlation is only 0.59.
+- **Weekday shape:** real Tuesdays and Wednesdays are much quieter (0.82 and 0.86 of average) and Saturdays busier (1.07, against 0.93 in the synthetic schedule).
+- **Next step:** the real schedule can replace the synthetic one once the backfill reaches back far enough. The full report is in `outputs/flights_report.md`.
 
 The airport layout comes from [OpenStreetMap](https://www.openstreetmap.org/copyright) (ODbL), cached in `reference_data/osm/` by `airport_geometry.py`: the real gates (102-119, 201-224, 301-307A, 332-337, 401-426, the South Gates), the stands they serve, terminals, aprons, taxiways, runways and car parks. Pier centrelines and security exits are traced by hand; see `reference_data/SOURCES.md`.
 
@@ -170,6 +183,8 @@ Other commands:
 
 - `python run_all.py --data-only`: write the CSVs only.
 - `python real_data.py`: refresh the CSO figures.
+- `python calendar_data.py`: refresh the public holidays (`--show` prints the calendar).
+- `python real_flights.py --max-hours 1`: continue the OpenSky backfill (needs `reference_data/flights/credentials.json`, an OpenSky API client; about 66 days per day of credits). `--report` writes the coverage report.
 - `pytest`: run the tests (metrics, conformal calibration, MinT, data invariants).
 
 Outputs:
@@ -199,6 +214,8 @@ TimesFM 3 weights are under the [TimesFM Non-Commercial License v1.0](https://hu
 | `calibration.py` | Conformal bands (normalised CQR; Mondrian by event and weather-risk day; online in the backtest) |
 | `reconcile.py` | MinT with Schäfer–Strimmer shrinkage |
 | `forecast_eval.py`, `forecast_final.py`, `run_all.py` | Backtest, production forecast, orchestration |
+| `calendar_data.py` | Real public holidays (Nager.Date) and the curated Irish school calendar used by the forecast |
+| `real_flights.py` | Real flights at Dublin from OpenSky: resumable backfill, daily aggregate, coverage report against CSO |
 | `airport_geometry.py` | Real piers, gates, stands and walking distances from OpenStreetMap; writes `flow_demo/js/airport_geo.js` |
 | `scenario_server.py` | Serves the twin; Gemini (or Claude) interprets scenarios and writes the impact briefing (optional) |
 | `flow_demo/` | The operations twin (below) |

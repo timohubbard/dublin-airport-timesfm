@@ -1,0 +1,26 @@
+# Irish school breaks, curated by hand (see calendar_data.py). A break runs from
+# the last school day (families travel that evening) to the Sunday before schools
+# reopen. Christmas, Easter and mid-terms are standardised by the Department of
+# Education (circulars 0005/2020 for 2022/23, 0072/2022 for 2023/24 to 2025/26);
+# the dates below are as published by schools that follow the standard. Summer
+# holidays are not standardised: those rows are an approximation.
+start,end,break,source
+2023-01-01,2023-01-04,Christmas 2022,approximate: standard 2022/23 Christmas break reopening early January
+2023-02-10,2023-02-19,February mid-term,circular 0005/2020 via school calendars (13-17 Feb 2023)
+2023-03-31,2023-04-16,Easter,circular 0005/2020 via school calendars (closed 3-14 Apr; last day Fri 31 Mar)
+2023-06-30,2023-08-31,Summer,approximate: not standardised (primary schools close end of June)
+2023-10-27,2023-11-05,October mid-term,circular 0072/2022 via school calendars (30 Oct-3 Nov 2023)
+2023-12-22,2024-01-07,Christmas,circular 0072/2022 via school calendars (last day Fri 22 Dec; reopen Mon 8 Jan)
+2024-02-09,2024-02-18,February mid-term,circular 0072/2022 via school calendars (post-primary 12-16 Feb 2024)
+2024-03-22,2024-04-07,Easter,circular 0072/2022 via school calendars (last day Fri 22 Mar; reopen Mon 8 Apr)
+2024-06-28,2024-08-31,Summer,approximate: not standardised (primary schools close end of June)
+2024-10-25,2024-11-03,October mid-term,circular 0072/2022 via school calendars (28 Oct-1 Nov 2024)
+2024-12-20,2025-01-05,Christmas,circular 0072/2022 via school calendars (last day Fri 20 Dec; reopen Mon 6 Jan)
+2025-02-14,2025-02-23,February mid-term,circular 0072/2022 via school calendars (17-21 Feb 2025)
+2025-04-11,2025-04-27,Easter,circular 0072/2022 via school calendars (closed 14-25 Apr; reopen Mon 28 Apr)
+2025-06-27,2025-08-31,Summer,approximate: not standardised (primary schools close end of June)
+2025-10-24,2025-11-02,October mid-term,circular 0072/2022 (27-31 Oct 2025)
+2025-12-19,2026-01-04,Christmas,circular 0072/2022 (last day Fri 19 Dec; reopen Mon 5 Jan)
+2026-02-13,2026-02-22,February mid-term,circular 0072/2022 (16-20 Feb 2026)
+2026-03-27,2026-04-12,Easter,school calendars (close noon Fri 27 Mar; reopen Mon 13 Apr)
+2026-06-26,2026-08-31,Summer,approximate: not standardised (primary schools close end of June)

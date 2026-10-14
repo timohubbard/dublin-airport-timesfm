@@ -45,6 +45,7 @@ from matplotlib.patches import FancyBboxPatch
 import numpy as np
 import pandas as pd
 
+from calendar_data import ie_bank_holidays, ie_school_holiday
 from real_data import market_targets, monthly_factor
 from weather_data import disruption
 
@@ -99,49 +100,19 @@ def easter_sunday(year: int) -> date:
     return date(year, month, day)
 
 
-def nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
-    first = date(year, month, 1)
-    shift = (weekday - first.weekday()) % 7
-    return first + timedelta(days=shift + 7 * (n - 1))
-
-
-def last_weekday(year: int, month: int, weekday: int) -> date:
-    if month == 12:
-        cursor = date(year + 1, 1, 1) - timedelta(days=1)
-    else:
-        cursor = date(year, month + 1, 1) - timedelta(days=1)
-    return cursor - timedelta(days=(cursor.weekday() - weekday) % 7)
-
-
 def seasonal_events(year: int) -> list[tuple[date, str]]:
-    """Dates whose passenger bump repeats every year."""
-    easter = easter_sunday(year)
-    marked = [
-        (date(year, 3, 17), "St Patrick's Day"),
-        (easter, "Easter Sunday"),
-        (easter + timedelta(days=1), "Easter Monday"),
-        (nth_weekday(year, 5, 0, 1), "May bank holiday"),
-        (nth_weekday(year, 6, 0, 1), "June bank holiday"),
-        (nth_weekday(year, 8, 0, 1), "August bank holiday"),
-        (last_weekday(year, 10, 0), "October bank holiday"),
-    ]
+    """Dates whose passenger bump repeats every year: Ireland's real bank
+    holidays (reference_data/calendar, from Nager.Date), Easter Sunday and
+    the Christmas getaway."""
+    marked = [(easter_sunday(year), "Easter Sunday")] + ie_bank_holidays(year)
     for day in range(20, 24):
         marked.append((date(year, 12, day), "Christmas getaway"))
-    return marked
+    return sorted(marked)
 
 
 def school_holiday(day: date) -> bool:
-    """Irish school breaks, approximately: Easter fortnight, summer, mid-terms, Christmas."""
-    easter = easter_sunday(day.year)
-    if easter - timedelta(days=9) <= day <= easter + timedelta(days=7):
-        return True
-    if date(day.year, 6, 28) <= day <= date(day.year, 8, 31):
-        return True
-    if day.month == 10 and day.day >= 26 or day.month == 11 and day.day <= 2:
-        return True
-    if day.month == 2 and 12 <= day.day <= 18:
-        return True
-    return (day.month == 12 and day.day >= 21) or (day.month == 1 and day.day <= 5)
+    """Irish school breaks: the standardised mid-terms, Christmas and Easter, and summer (reference_data/calendar)."""
+    return ie_school_holiday(day)
 
 
 def build_dataset(seed: int = SEED) -> pd.DataFrame:
