@@ -321,11 +321,16 @@ The map stacks the terminals by level: departures, roads, arrivals, the baggage 
 
 | Roster | Missed flights | Mean daily security peak | Worst taxi-rank wait |
 | --- | --- | --- | --- |
-| History only | 855 | 14.2 min | 113 min |
-| Covariates P50 | 407 | 5.5 min | 80 min |
-| Covariates P90 | 329 | 4.4 min | 15 min |
+| History only | 1,023 | 15.3 min | 152 min |
+| Covariates P50 | 453 | 5.4 min | 62 min |
+| Covariates P90 | 378 | 4.4 min | 31 min |
 
-Most missed flights under every roster fall on 27 March, the Friday the Easter school holidays start: 689, 388 and 322. T1's first wave is capacity-bound under any roster, and the real walk makes it worse. Under P50, 228 of the 388 were bound for Pier 1, 600–900 m from security, so a 23-minute queue plus a 10-minute walk misses a 06:00 boarding close that the queue alone would have made. That is a capacity (and layout) problem, not a forecasting one. History only also misses 161 on 5 March (summit departures). These figures changed with the real piers and walking times. Day generation now gives each terminal, phase and flight its own seeded stream (T1 keeps each day's original timetable), so individual days differ slightly from earlier versions.
+**27 March.** Most missed flights under every roster fall on this day, the Friday the Easter school holidays start: 709, 451 and 376.
+- T1's first wave is capacity-bound under any roster, and the real walk makes it worse.
+- Under P50, 276 of the 451 were bound for Pier 1, 600–900 m from security. A 24-minute queue plus a 10-minute walk misses a 06:00 boarding close that the queue alone would have made.
+- That is a capacity (and layout) problem, not a forecasting one.
+
+History only also misses 314 on 5 March (summit departures). These figures changed with the real piers, walking times and calendar. Day generation now gives each terminal, phase and flight its own seeded stream (T1 keeps each day's original timetable), so individual days differ from earlier versions.
 
 **Verification** (browser console):
 
