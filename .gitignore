@@ -10,3 +10,6 @@ outputs/
 
 # Local Claude Code settings
 .claude/
+
+# OpenSky API client (never commit)
+reference_data/flights/credentials.json
