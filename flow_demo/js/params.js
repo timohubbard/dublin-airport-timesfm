@@ -79,7 +79,8 @@ const PERSONAS = {
 const PERSONA_KEYS = Object.keys(PERSONAS);
 const DEFAULT_MIX = { business: .2, leisure: .52, family: .18, group: .088, prm: .012 };
 const FT_LANES = 2, FT_MERGE = 300;
-const PIER_PREF = { R: { P1: .35, P2: .10, P3: .55 }, O: { P1: .2, P2: .6, P3: .2 } };
+// T1 pier choice by airline group: Ryanair mostly Pier 1 and Pier 3, the others mostly Pier 2 (illustrative).
+const PIER_PREF = { R: { P1: .55, P3: .3, P2: .15 }, O: { P2: .65, P1: .15, P3: .2 } };
 
 /* Ground access, same tables as forecast_operations.py. "met" is drop-off on
    departure and met-by-car on arrival. Visitors have no car at the airport. */

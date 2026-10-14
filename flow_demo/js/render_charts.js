@@ -71,6 +71,7 @@ function chartResource(c, X, key, res) {
     }
   }
   g.globalAlpha = 1;
+  if (res.id === 'sec' || res.id === 'imm') hzTimelineBand(c, X, key, res.id, Yv);
   g.beginPath(); g.moveTo(X(TL_X0), YW(0));
   for (let m = 0; m < out.wait.length; m++) { const t = TL_X0 + m * 60; if (t > TL_X1) break; g.lineTo(X(t), YW(out.wait[m])); }
   g.lineTo(X(TL_X1), YW(0)); g.closePath();

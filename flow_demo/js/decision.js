@@ -117,7 +117,27 @@ function alertsFor(g) {
         text: `${GEO[k].short} passport control ${fmtHM(w.from)}–${fmtHM(w.to)}: up to ${Math.round(w.peak)} min if arrivals land on P90` });
     }
   }
-  return out.sort((a, b) => b.peak - a.peak).slice(0, 6);
+  out.sort((a, b) => b.peak - a.peak);
+  return [...weatherAlerts(g), ...out].slice(0, 6);
+}
+/* Weather alerts: disruption risk from the day-before forecast, and the
+   runway holding the forecast weather implies. */
+function weatherAlerts(g) {
+  const d = g.day, w = d.weather; if (!w) return [];
+  const out = [], r = w.riskDayAhead || {}, p = Math.max(r.ifs || 0, r.aifs || 0);
+  const base = (DATA.weather.climateRisk || {}).any || 0.05;
+  if (p >= 0.15) out.push({ res: 'wx', key: 't1', peak: 99, extra: 0, weather: true,
+    text: `Weather: disruption risk ${Math.round(p * 100)}% the day before (IFS ${Math.round((r.ifs || 0) * 100)}%, AIFS ${Math.round((r.aifs || 0) * 100)}%; usually ${Math.round(base * 100)}%). Plan for slower turnarounds and longer passport queues from late arrivals.` });
+  for (const m of ['ifs', 'aifs']) {
+    const win = forecastHolding(d, m);
+    if (win && win.length) {
+      const hrs = win.map(x => x.h), why = win[0].why;
+      out.push({ res: 'wx', key: 't1', peak: 98, extra: 0, weather: true,
+        text: `Runway: ${m.toUpperCase()} day-ahead forecast implies ${why} ${pad(hrs[0])}–${pad(hrs[hrs.length - 1] + 1)}h, rate down to ${Math.round(Math.min(...win.map(x => x.rate)))} movements/h: expect arrival holding.` });
+      break;
+    }
+  }
+  return out;
 }
 function windows(wait, limit) {
   const out = []; let cur = null;

@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=934574">
+<link rel="stylesheet" href="css/app.css?v=a4">
 </head>
 <body>
 <header class="top">
@@ -96,7 +96,7 @@
         <div class="glass note">Filled dots depart · rings arrive · scroll to zoom, drag to pan, click anyone to follow</div>
         <div class="glass follow" id="follow"></div>
       </div>
-      <div class="ov tr"><div class="seg glass" id="colorSeg" style="border-radius:10px"></div></div>
+      <div class="ov tr"><div class="seg glass" id="colorSeg" style="border-radius:10px"></div><div class="glass wxbadge" id="wxBadge" aria-live="polite"></div></div>
       <div class="ov bl"><div class="glass legend" id="legend"></div></div>
       <div class="ov br">
         <button class="glass zbtn" id="zin" aria-label="Zoom in">+</button>
@@ -121,6 +121,8 @@
     <div id="tab-dep" class="tabpane">
       <h3>Security, live</h3>
       <div id="cards"></div>
+      <h3>Walk to the gate <small>from security · OpenStreetMap distances</small></h3>
+      <table class="mtab walks" id="walks"></table>
       <h3>Departures <small>both terminals</small></h3>
       <div class="board"><div class="boardh"><span>Time</span><span>Destination</span><span>Gate</span><span>Status</span></div><div id="board"></div></div>
     </div>
@@ -161,28 +163,32 @@
 <div class="storybar glass" id="storybar"></div>
 <div class="brief" id="brief"></div>
 
-<script src="flow_data.js?v=934574"></script>
-<script src="js/core.js?v=934574"></script>
-<script src="js/params.js?v=934574"></script>
-<script src="js/geometry.js?v=934574"></script>
-<script src="js/facilities.js?v=934574"></script>
-<script src="js/forecast.js?v=934574"></script>
-<script src="js/schedule.js?v=934574"></script>
-<script src="js/roster.js?v=934574"></script>
-<script src="js/decision.js?v=934574"></script>
-<script src="js/sim.js?v=934574"></script>
-<script src="js/flow_dep.js?v=934574"></script>
-<script src="js/flow_arr.js?v=934574"></script>
-<script src="js/flow_other.js?v=934574"></script>
-<script src="js/commerce.js?v=934574"></script>
-<script src="js/baggage.js?v=934574"></script>
-<script src="js/landside.js?v=934574"></script>
-<script src="js/render_map.js?v=934574"></script>
-<script src="js/render_charts.js?v=934574"></script>
-<script src="js/studio.js?v=934574"></script>
-<script src="js/ui.js?v=934574"></script>
-<script src="js/story.js?v=934574"></script>
-<script src="js/main.js?v=934574"></script>
-<script src="js/verify.js?v=934574"></script>
+<script src="flow_data.js?v=a4"></script>
+<script src="js/airport_geo.js?v=a4"></script>
+<script src="js/core.js?v=a4"></script>
+<script src="js/params.js?v=a4"></script>
+<script src="js/geometry.js?v=a4"></script>
+<script src="js/facilities.js?v=a4"></script>
+<script src="js/forecast.js?v=a4"></script>
+<script src="js/weather.js?v=a4"></script>
+<script src="js/schedule.js?v=a4"></script>
+<script src="js/roster.js?v=a4"></script>
+<script src="js/decision.js?v=a4"></script>
+<script src="js/sim.js?v=a4"></script>
+<script src="js/flow_dep.js?v=a4"></script>
+<script src="js/flow_arr.js?v=a4"></script>
+<script src="js/flow_other.js?v=a4"></script>
+<script src="js/commerce.js?v=a4"></script>
+<script src="js/baggage.js?v=a4"></script>
+<script src="js/landside.js?v=a4"></script>
+<script src="js/render_map.js?v=a4"></script>
+<script src="js/site_view.js?v=a4"></script>
+<script src="js/render_charts.js?v=a4"></script>
+<script src="js/studio.js?v=a4"></script>
+<script src="js/horizons.js?v=a4"></script>
+<script src="js/ui.js?v=a4"></script>
+<script src="js/story.js?v=a4"></script>
+<script src="js/main.js?v=a4"></script>
+<script src="js/verify.js?v=a4"></script>
 </body>
 </html>

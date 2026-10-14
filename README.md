@@ -2,75 +2,133 @@
 
 A forecasting system for a **synthetic** Dublin Airport, built on [TimesFM 3](https://research.google/blog/timesfm-3-a-zero-shot-foundation-model-for-multivariate-forecasting/) (zero-shot, no fine-tuning), and a whole-airport simulation that is rostered from it.
 
-- The daily history is invented, but **every month is calibrated to the Central Statistics Office's published Dublin Airport figures**: total passengers, the mix of destinations, and the arrival/departure split.
+- The daily history is invented, but two things are real:
+  - **Traffic:** every month matches the Central Statistics Office's published Dublin Airport figures (total passengers, destination mix, arrival/departure split).
+  - **Weather:** every day carries **Dublin Airport's real weather** from Met Éireann and METAR, and the **ECMWF IFS and AIFS forecasts exactly as they were issued**.
 - Terminals, markets, landside flows and every operational number are illustrative, not daa data.
 
 ## What it does
 
 | | |
 | --- | --- |
-| **Forecast** | 28 days ahead, for terminals, destination markets, arrivals and departures, taxis, buses and car parks. TimesFM 3 reads the history plus what is known in advance (published schedule, events, school holidays, event direction) and what is only known afterwards (delays, cancellations). |
+| **Forecast** | 28 days ahead, refreshed the evening before each day, for terminals, destination markets, arrivals and departures, taxis, buses and car parks. TimesFM 3 reads the history plus what is known in advance (published schedule, events, school holidays, event direction, the weather forecast) and what is only known afterwards (delays, cancellations, observed weather). |
 | **Measure** | A rolling-origin backtest over 52 weekly origins against four classical baselines. Point error, interval coverage and quantile loss, with bootstrap intervals so small slices are not over-claimed. |
-| **Calibrate** | Split-conformal bands (P5 to P95), fitted on half the origins and checked on the unseen half. |
+| **Calibrate** | Conformal bands (P5 to P95), recalibrated at each origin on everything known by then. Event days and weather-risk days are calibrated separately. |
 | **Reconcile** | MinT so that arrivals + departures = market and markets = terminal. |
-| **Explain** | Exact Shapley values of the covariate groups (schedule, events, calendar) from eight TimesFM runs per family. |
-| **Ask what if** | TimesFM re-forecasts the day if an event is announced, 10% of flights are cancelled, or a route is added. |
+| **Explain** | Exact Shapley values of the covariate groups (schedule, events, calendar, weather), from 8 or 16 TimesFM runs per family. |
+| **Weather** | Disruption risk from ECMWF IFS (physics) and ECMWF AIFS (AI), scored against climatology. The weather forecast is used in TimesFM only when its own risk model flags a day. |
+| **Ask what if** | TimesFM re-forecasts the day if an event is announced, 10% of flights are cancelled, or a route is added. Fog and storm scenarios run through the runway model. |
 | **Decide** | The twin rosters security, passport control, taxis and shuttles from any forecast quantile. It shows each roster's cost against its risk before the day, then what actually happened. |
 
 ## Results
 
 Scored 1–28 days ahead, on the 26 weekly origins (August 2025 to January 2026) that the calibration never saw. WAPE is weighted absolute percentage error; lower is better.
 
-| Series | TimesFM + schedule & events | TimesFM, history only | Planner's method¹ | Holt-Winters | Last week |
+| Series | TimesFM + schedule, events, gated weather | TimesFM, history only | Planner's method¹ | Holt-Winters | Last week |
 | --- | --- | --- | --- | --- | --- |
-| Terminal passengers | **2.7%** | 4.4% | 4.2% | 7.2% | 8.6% |
-| … on event days | **3.1%** | 15.0% | 8.1% | 11.6% | 12.6% |
-| Passengers by market | **3.8–3.9%** | 5.8–5.9% | 4.9–5.0% | 8.8–9.4% | 10.6–11.0% |
-| Arrivals/departures by market | **4.8–4.9%** | 6.6% | 6.0–6.3% | 9.6–10.1% | 11.5–11.8% |
-| Taxis, buses, car park | **3.9%** | 5.1% | 6.1% | 6.9% | 7.9% |
+| Terminal passengers | **2.7%** | 4.1% | 3.9% | 7.1% | 7.9% |
+| … on event days | **2.8%** | 13.8% | 6.9% | 10.3% | 11.3% |
+| Passengers by market | **3.8%** | 5.5–5.6% | 4.5–4.7% | 8.8–9.0% | 10.0–10.2% |
+| Arrivals/departures by market | **4.6–4.8%** | 6.2–6.4% | 5.8% | 9.5–9.8% | 11.0–11.3% |
+| Taxis, buses, car park | **4.0%** | 5.3% | 6.1% | 7.2% | 8.2% |
 
 ![Backtest leaderboard](docs/leaderboard.png)
 
 ¹ Next period's published schedule × the passengers per scheduled movement on the same weekday over the last four weeks. It is the honest competitor, because it uses the schedule too.
 
-**Is the gain real?** The 95% bootstrap interval (over origins) for TimesFM-with-covariates minus each baseline excludes zero for every family on all days:
+**Is the gain real?** The 95% bootstrap interval (over origins) for TimesFM-with-covariates minus each baseline excludes zero for every family, on all days and on event days. For terminals:
 
-- versus the planner's method: −1.6 points [−2.1, −1.1]
-- versus history-only TimesFM: −1.7 [−2.3, −1.1]
-- on event days, versus history only: −11.9 [−13.7, −10.0]
+| Comparison | Difference, WAPE points [95% interval] |
+| --- | --- |
+| vs the planner's method | −1.2 [−1.5, −0.8] |
+| vs history-only TimesFM | −1.4 [−1.9, −1.0] |
+| vs history only, on event days | −11.0 [−12.7, −9.2] |
 
 **Are the bands honest?**
 
-| | Share of actuals inside |
+| Band | Share of actuals inside |
 | --- | --- |
-| Nominal 80% band, as TimesFM returns it | 82–87% |
-| After calibration, 80% band | 80–83% |
-| After calibration, 90% band | 90–93% |
+| 80% band, after calibration | 77–81% |
+| 90% band, after calibration | 88–91% |
 
-The reliability diagram ([docs/calibration.png](docs/calibration.png)) is also in the Forecast Studio.
+- The calibration is *online*: each scored origin uses every forecast whose outcome was already known.
+- Coverage is a little under target in winter, when real weather makes errors larger than in the calmer months the bands learned from.
+- The reliability diagram ([docs/calibration.png](docs/calibration.png)) is also in the Forecast Studio.
 
-**Reconciliation.** MinT makes the hierarchy add up exactly (the base forecasts disagree by about 110 passengers a day) and lowers error slightly at every level:
-
-| Level | WAPE before | WAPE after |
-| --- | --- | --- |
-| Terminal | 2.70% | 2.55% |
-| Market | 3.81% | 3.78% |
-| Arrivals/departures | 4.83% | 4.75% |
+**Reconciliation.**
+- MinT makes the hierarchy add up exactly; the base forecasts disagree by about 110 passengers a day.
+- Since real weather entered the history, this coherence costs a little accuracy: terminals 2.71% → 2.81%, markets 3.84% → 3.90%. Correlated disruption-day errors make the shrunk covariance less helpful.
+- Coherent rosters are worth it, but it is a trade-off, not a free gain.
 
 **March 2026 holdout** (one month, the data the demo replays):
-
-- Covariate forecast: 2.9% error on Terminal 1, 2.8% on Terminal 2. History only: 6.4% and 6.1%.
-- The month is deliberately hard: a two-day summit, St Patrick's Day, a fog day (only known afterwards) and a route launch.
-- Across all series, 71% of days fell inside the 80% band. One event-heavy month is a small sample; the 26-origin backtest is the number to trust.
+- **Plan made on 1 March:** 2.0% error on Terminal 1, 2.1% on Terminal 2, against 4.8% and 4.2% from history only.
+- **Refreshed the evening before each day**, with the latest passengers and the latest weather forecast: error across all 37 series falls from 5.4% to 3.4%.
+- Across all series, 77% of days fell inside the 80% band.
 
 ### Why these numbers are believable
 
 An earlier version of this project reported about 0.6% error on event days. That was leakage: the "schedule" covariate was the realised flight count, and passengers were the schedule times a constant. Now:
 
-- **The schedule covariate is the published schedule.** On the day, weather cancels flights and ad-hoc flights are added. Those realised counts, delays and the cancelled share are past-only covariates.
+- **The schedule covariate is the published schedule.** On the day, real weather cancels flights and ad-hoc flights are added. Those realised counts, delays, the cancelled share and the observed weather are past-only covariates.
 - **Passengers = operated seats × load factor.** The load factor has its own persistent demand drift (AR(1), φ = 0.93), its own weekly pattern, school-holiday lift, and an event lift of random size that no covariate reveals. The event flag says "busier", not "how much".
+- **Weather forecasts are the ones that were actually issued.** Horizon day *j* uses the ECMWF run from *j*+1 days before the origin; beyond 7 days it uses climatology. `tests/test_weather.py` checks this.
 - **Market schedules come from the expected market share**, not the realised one.
-- **`tests/test_data.py`** checks that the fog day's operated flights fall well below the published schedule, and that passengers per scheduled movement still vary.
+- **`tests/test_data.py`** checks that Storm Éowyn's operated flights fall well below the published schedule, and that passengers per scheduled movement still vary.
+
+## Weather
+
+**Sources**, all cached in `reference_data/weather/` by `weather_data.py`:
+
+| Source | What it provides |
+| --- | --- |
+| [Met Éireann, Dublin Airport station 532](https://data.gov.ie/dataset/dublin-airport-hourly-data) (CC BY 4.0) | Hourly rain, temperature, wind, visibility and cloud |
+| [METAR for EIDW via the Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/) | Gusts, ceiling, fog, snow and freezing codes |
+| [ECMWF](https://www.ecmwf.int/en/forecasts/datasets/open-data) IFS 0.25° (physics) and AIFS (machine learning), CC BY 4.0, through the [Open-Meteo Previous Runs API](https://open-meteo.com/en/docs/previous-runs-api) | Each day's forecast as issued 1–7 days earlier, from February/March 2024. Open-Meteo's free API is for non-commercial use. Neither archive carries gusts or visibility, so wind comes from mean wind and pressure, and fog risk from the dew-point depression. |
+
+Met Éireann's archived warnings end in August 2023, so warnings are not used.
+
+**Real disruptions drive the history.**
+- Storm Darragh (7 Dec 2024) and Storm Éowyn (24 Jan 2025) cancel about 30% of flights.
+- Freezing fog, snow, strong winds and frost add cancellations and delays.
+- Rain lifts taxi demand by 6% and trims buses by 3%.
+- The rules are in `weather_data.disruption` and are illustrative.
+- In March 2026 the real weather brought a wet, windy 12 March (gusts 42 kt, 21 mm of rain), snow showers on the 13th and 15th, frosty mornings, and blustery 24–25 March.
+
+**Disruption risk** (`weather_risk.py`): Brier skill against climatology on the later half of the archive; above zero adds information.
+
+| Target | IFS 1–3 days | AIFS 1–3 days | IFS 4–7 days | AIFS 4–7 days |
+| --- | --- | --- | --- | --- |
+| Any weather disruption | 0.05 | 0.06 | 0.00 | 0.05 |
+| Gusts ≥ 45 kt | 0.21 | 0.23 | 0.08 | 0.09 |
+| Snow or ice | 0.06 | 0.03 | 0.05 | 0.03 |
+| Low visibility ≥ 2 h | 0.09 | 0.07 | 0.00 | 0.03 |
+
+- **Wind:** IFS forecasts it more accurately (day-ahead error 2.1 kt against 2.6 kt for AIFS).
+- **Risk at 4–7 days:** AIFS holds its skill better.
+- **12 March:** both raised the disruption risk from about 10–16% a week ahead to 20–21% the evening before, against a usual 5%.
+
+**Weather in TimesFM.** The honest result:
+
+| Model | All days | Disrupted days, 1–7 days ahead |
+| --- | --- | --- |
+| No weather | 2.71% | 9.83% |
+| + IFS weather, always on | 2.85% | 9.46% |
+| + AIFS weather, always on | 2.78% | 9.21% |
+| **AIFS weather, only when its risk model flags the day** | **2.70%** | **9.30%** |
+
+- **Always-on weather hurts on ordinary days.** It is noise there: +0.07 to +0.15 points, intervals excluding zero.
+- **The gated model is never worse.** It gains on disrupted days in the first week: −0.53 points [−1.59, −0.01] for terminals and −0.51 [−1.37, −0.05] for landside.
+- **The sample is small:** only 9 such days are in the scored half, so treat the gain as promising, not proven.
+- **The production model is gated AIFS,** chosen on the calibration origins with a tie-break fixed in advance.
+- **Weather is a 1–7 day signal,** which is why the twin's rosters can be switched to the plan refreshed the day before.
+
+**In the twin** (`flow_demo/js/weather.js`): each March day replays its real hourly weather.
+- **Runway rate** (illustrative): 64 movements/h on dual runways; 30 under low-visibility procedures; ×0.75 in crosswind gusts; near-suspension in storm-force gusts. Arrivals and departures queue for slots.
+- **De-icing** on frosty mornings.
+- **Rain** pushes arriving passengers to taxis.
+- **On the map:** a weather badge with wind, visibility and the runway in use; fog haze and rain streaks.
+- **Alerts** use the day-before disruption risk.
+- **Scenarios:** "Low visibility 06–11h" and "Storm (red warning)".
 
 ## Data provenance
 
@@ -130,9 +188,10 @@ TimesFM 3 weights are under the [TimesFM Non-Commercial License v1.0](https://hu
 | `forecast_dublin_airport.py` | Terminal series (published schedule, operated flights, load factor), the TimesFM loader |
 | `forecast_markets.py`, `forecast_operations.py` | Markets, direction, landside, car-park stocks |
 | `real_data.py` | CSO data and monthly calibration |
-| `pipeline.py` | Forecast families, covariate groups, cached TimesFM engine, Shapley values |
+| `pipeline.py` | Forecast families, covariate groups, as-issued weather rows, cached TimesFM engine, Shapley values |
+| `weather_data.py`, `weather_risk.py` | Real observations and as-issued ECMWF forecasts; disruption-risk models |
 | `baselines.py`, `metrics.py` | Classical baselines, metrics and bootstrap (numpy only) |
-| `calibration.py` | Split-conformal (normalised CQR, Mondrian by event day) |
+| `calibration.py` | Conformal bands (normalised CQR; Mondrian by event and weather-risk day; online in the backtest) |
 | `reconcile.py` | MinT with Schäfer–Strimmer shrinkage |
 | `forecast_eval.py`, `forecast_final.py`, `run_all.py` | Backtest, production forecast, orchestration |
 | `flow_demo/` | The operations twin (below) |
@@ -163,7 +222,7 @@ The map is one schematic stacked by level: piers and gates, departures, roads, a
 
 **Roster & risk:**
 
-- Presets **1 2 3**: history only, covariates P50, covariates P90. A **risk-appetite slider** (keys **[ ]**) rosters for any calibrated quantile from P50 to P95.
+- Presets **1 2 3**: history only, covariates P50, covariates P90. A **risk-appetite slider** (keys **[ ]**) rosters for any calibrated quantile from P50 to P95. A switch chooses the plan made on 1 March or the plan **updated the evening before** (latest passengers and weather).
 - **Cost against risk.** Each security roster is plotted by its cost in staff-hours and illustrative €, against the share of passengers expected through within 15 minutes. That share is measured before the day, by queueing the forecast's whole distribution (P5 to P95) through the same model, and set against what the actual day delivered.
 - The app recommends the cheapest roster that keeps 95% of passengers within 15 minutes.
 - **Alerts** list the windows that break the service level if demand lands on P90. One click adds the lanes or booths that fix them.
@@ -172,7 +231,7 @@ The map is one schematic stacked by level: piers and gates, departures, roads, a
 **What if** (applies to the selected day):
 
 - **Demand scenarios:** announce an event, cancel 10% of flights, add a route. "Tell the forecast" scales the covariate rosters by TimesFM's own re-forecast; the history-only model cannot be told.
-- **Capacity scenarios:** fog, three T1 lanes out, eGates down, taxi shortage.
+- **Capacity scenarios:** low visibility 06–11h, a storm with a red warning (both through the runway model), three T1 lanes out, eGates down, taxi shortage.
 
 **Present:**
 
@@ -190,15 +249,15 @@ The map is one schematic stacked by level: piers and gates, departures, roads, a
 | C, P | Dot colours, performance meter |
 | Click | Follow a person (Esc to stop) |
 
-**March in the twin.** All 28 days, people following actual demand, rosters from each forecast:
+**March in the twin.** All 28 days, people following actual demand and the real weather, rosters from each forecast:
 
 | Roster | Missed flights | Mean daily security peak | Worst taxi-rank wait |
 | --- | --- | --- | --- |
-| History only | 694 | 14.5 min | 117 min |
-| Covariates P50 | 249 | 5.1 min | 81 min |
-| Covariates P90 | 236 | 4.7 min | 19 min |
+| History only | 445 | 12.9 min | 108 min |
+| Covariates P50 | 250 | 5.0 min | 58 min |
+| Covariates P90 | 192 | 4.4 min | 11 min |
 
-About 235 of the missed flights under the P50 and P90 rosters fall on 27 March, the Friday the Easter school holidays start, when T1 security is short of lanes under any roster. That is a capacity problem, not a forecasting one.
+Under the P50 and P90 rosters every missed flight falls on 27 March, the Friday the Easter school holidays start, when T1 security is short of lanes under any roster. That is a capacity problem, not a forecasting one. History only also misses 74 on 5 March (summit departures).
 
 **Verification** (browser console):
 

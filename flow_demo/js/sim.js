@@ -80,7 +80,9 @@ function resetSim() {
     ts: { t1: termState('t1'), t2: termState('t2') },
     staff: { q: new Queue(), lanes: STAFF_SEARCH.lanes.map(l => ({ ...l, busy: 0, flash: -1e9 })), served: 0, peak: 0, onDuty: 0 },
     counts: { boarded: 0, missed: 0, arrDone: 0, exitMode: {}, trfDone: 0, grtDone: 0, stfDone: 0 },
-    rpOf: new Map(), greeterWaiting: [],
+    rpOf: new Map(), greeterWaiting: [], missedPier: {},
+    // Observed arrivals by clock hour at security and passport control, for the nowcast.
+    obs: { sec: { t1: new Float64Array(NH), t2: new Float64Array(NH) }, imm: { t1: new Float64Array(NH), t2: new Float64Array(NH) } },
     hist: { t: [], carparks: [], kerb: [], taxi: [], imm: [] },
   };
   for (const f of gen.flights) { f.boarded = 0; f.bagsLoaded = 0; f.shortShipped = 0; f.lateral = null; f.bagsIn = 0; }

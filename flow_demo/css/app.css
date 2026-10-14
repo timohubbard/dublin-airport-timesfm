@@ -446,3 +446,25 @@ kbd{display:inline-block;min-width:22px;padding:2px 6px;border-radius:5px;border
 @media (max-width:1180px){ .status{flex-wrap:wrap} .storybar{bottom:10px} .hgrid{grid-template-columns:1fr} .bgrid{grid-template-columns:1fr} }
 .sub2,.hint,.foot,.cal-key,.tlk{font-size:11px}
 .ftab tr.tot td{white-space:normal;line-height:1.3}
+
+/* ---- weather ---- */
+.ov.tr{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.wxbadge{padding:7px 11px;font-size:11.5px;color:var(--muted);min-width:220px}
+.wxbadge .wxr{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.wxbadge .wxr b{color:var(--text);font:600 13px var(--mono)}
+.wxbadge .wxi{font-size:16px;line-height:1}
+.wxbadge .wsock{display:inline-block;color:var(--accent);font-weight:700;transition:transform .6s}
+.wxbadge .wxs{margin-top:3px;font-size:10.5px;color:var(--dim)}
+.wxbadge .wxs.warn{color:var(--warn)}
+.cal button .wxi{position:absolute;top:1px;left:3px;font-size:9px;line-height:1}
+.dwx{display:flex;flex-wrap:wrap;gap:3px 6px;align-items:baseline;margin-top:7px;padding-top:7px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+.dwx b{color:var(--warn);font-weight:600}
+.dwx .wxi{font-size:13px}
+.dwx .sub2{width:100%}
+.alert.wx{background:rgba(244,114,182,.07);border-color:rgba(244,114,182,.28);color:#fbcfe8}
+.seg.src{display:flex;width:100%}
+.seg.src button{flex:1;font-size:11px}
+.wxgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.wxgrid .stread{flex-direction:column;gap:2px}
+.stread b.ai{color:#c084fc}
+@media (max-width:900px){.wxgrid{grid-template-columns:1fr}}

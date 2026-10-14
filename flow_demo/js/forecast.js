@@ -34,7 +34,8 @@ const SCENARIO_DEFS = {
   event: { name: 'Event announced', demand: true, desc: 'A conference-sized event is announced for the day. Airlines add 5% seats; demand rises most on Europe city and UK routes.' },
   cancel: { name: '10% of flights cancelled', demand: true, desc: 'An airline cancels 10% of the day’s schedule in advance (strike, aircraft shortage). Some passengers rebook onto other flights.' },
   extra: { name: 'New route, +6 movements', demand: true, desc: 'A new European city route adds six movements at Terminal 1.' },
-  fog: { name: 'Fog and flow restrictions', demand: false, desc: 'Low visibility: delays average 95 minutes and waves bunch up. Not known in advance, so no forecast sees it.' },
+  fog: { name: 'Low visibility 06–11h', demand: false, desc: 'Fog through the morning bank: low-visibility procedures close one runway, so the runway rate halves (illustrative 30 movements/h) and arrivals hold.' },
+  storm: { name: 'Storm (red warning)', demand: false, desc: 'An Éowyn-style storm: storm-force gusts 07–11h, near-suspension of the runway, 30% of flights cancelled in advance and passengers stay away.' },
   lanes: { name: 'Security lanes out of service', demand: false, desc: 'Three T1 security lanes are out of service all day (equipment fault).' },
   egate: { name: 'eGates down', demand: false, desc: 'The eGates are down in both terminals; every passenger who would use them goes to a booth.' },
   taxi: { name: 'Taxi shortage', demand: false, desc: 'Only three in four of the taxis called in to the holding area turn up (a driver protest or a big event in town).' },
@@ -46,17 +47,23 @@ const scnTold = () => SCN.kind && SCENARIO_DEFS[SCN.kind].demand && SCN.told;
 const maxLanesOf = key => GEO[key].maxLanes - (SCN.kind === 'lanes' && key === 't1' ? 3 : 0);
 const taxiSupplyFactor = () => (SCN.kind === 'taxi' ? 0.75 : 1);
 
+/* Which forecast the covariate rosters use: the 28-day plan made on 1 March,
+   or the refresh made the evening before each day (latest passengers and the
+   latest weather forecast). */
+const SRC = { dayahead: false };
+const useDayAhead = node => SRC.dayahead && node && node.da;
 function planValue(node, planKey) {
   if (!node) return 0;
   if (planKey === 'hist') return node.univariate ?? (node.plan ? node.plan.hist : 0);
   const li = planLevelIndex(planKey);
+  if (useDayAhead(node)) return node.da.q[li] * (scnTold() && node.scen && node.scen[SCN.kind] != null ? node.scen[SCN.kind] : 1);
   let v = node.q ? node.q[li] : li === 9 ? (node.plan ? node.plan.p90 : node.q90) : (node.plan ? node.plan.tfm : node.joint_with_covariates);
   if (scnTold() && node.scen && node.scen[SCN.kind] != null) v *= node.scen[SCN.kind];
   return v;
 }
 /* Forecast quantile row for a node: model 'cov' or 'uni', scenario-aware. */
 function nodeQ(node, model = 'cov') {
-  const q = model === 'uni' ? node.uq : node.q;
+  const q = model === 'uni' ? node.uq : useDayAhead(node) ? node.da.q : node.q;
   if (!q) return null;
   const f = model === 'cov' && scnTold() && node.scen ? node.scen[SCN.kind] ?? 1 : 1;
   return q.map(v => v * f);
@@ -69,13 +76,13 @@ function scenarioDay(di) {
   const d = JSON.parse(JSON.stringify(base));
   const scaleNode = (n, f) => { if (!n) return; n.actual = Math.round(n.actual * f); };
   const ratio = { t1: 1, t2: 1 };
-  if (SCN.kind === 'event' || SCN.kind === 'cancel' || SCN.kind === 'fog') {
+  if (SCN.kind === 'event' || SCN.kind === 'cancel' || SCN.kind === 'fog' || SCN.kind === 'storm') {
     for (const k of TERMS) {
       const before = d[k].actual;
       let after = 0;
       for (const m of TERMINAL_MARKETS[k]) {
         const md = d.markets[k][m];
-        const f = SCN.kind === 'event' ? 1 + EVENT_LIFT_SCN[m] : SCN.kind === 'cancel' ? 0.93 : 0.97;
+        const f = SCN.kind === 'event' ? 1 + EVENT_LIFT_SCN[m] : SCN.kind === 'cancel' ? 0.93 : SCN.kind === 'storm' ? 0.72 : 0.99;
         for (const dir of ['dep', 'arr']) scaleNode(md[dir], f);
         md.actual = md.dep.actual + md.arr.actual;
         if (SCN.kind === 'event') md.movements = Math.round(md.movements * 1.05);
@@ -92,7 +99,8 @@ function scenarioDay(di) {
     md.movements += 6; md.dep.actual += extra; md.arr.actual += extra; md.actual += 2 * extra;
     ratio.t1 = (d.t1.actual + 2 * extra) / d.t1.actual; d.t1.actual += 2 * extra; d.t1.movements += 6;
   }
-  if (SCN.kind === 'fog') { d.delayMin = Math.max(d.delayMin, 95); d.disruption = 'Fog and flow restrictions (scenario)'; }
+  if (SCN.kind === 'fog') { d.cancelledPct = Math.max(d.cancelledPct || 0, 2); d.disruption = 'Low visibility 06–11h (scenario)'; }
+  if (SCN.kind === 'storm') { d.cancelledPct = 30; d.disruption = 'Storm-force winds (scenario)'; }
   if (d.landside) for (const k of TERMS) { scaleNode(d.landside.taxi[k], ratio[k]); scaleNode(d.landside.bus[k], ratio[k]); }
   if (d.landside) { const r = (ratio.t1 + ratio.t2) / 2; scaleNode(d.landside.hbEntries, r); }
   d._scenario = SCN.kind;

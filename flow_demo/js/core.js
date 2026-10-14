@@ -95,12 +95,14 @@ class Snake {
 
 /* Movement helpers. tmp is a shared scratch point. */
 const tmp = { x: 0, y: 0, ang: 0 };
+/* d is metres walked. A path point may carry k, the real metres per drawn
+   unit of the leg that ends there (legs the twin draws shorter than they are). */
 function walkPath(a, d) {
   const P = a.path;
   while (d > 0 && a.pi < P.length) {
-    const p = P[a.pi], dx = p.x - a.x, dy = p.y - a.y, l = Math.hypot(dx, dy);
+    const p = P[a.pi], k = p.k || 1, dx = p.x - a.x, dy = p.y - a.y, l = Math.hypot(dx, dy) * k;
     if (l <= d) { a.x = p.x; a.y = p.y; d -= l; a.pi++; }
-    else { a.x += dx / l * d; a.y += dy / l * d; d = 0; }
+    else { const f = d / l; a.x += dx * f; a.y += dy * f; d = 0; }
   }
   return a.pi >= P.length;
 }

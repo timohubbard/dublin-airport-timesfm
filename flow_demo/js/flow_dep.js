@@ -18,7 +18,9 @@ function depAccessAt(g) {
 function setupDepMember(a, g) {
   const f = g.f;
   a.f = f; a.gate = f.gate; a.chk = g.chk; a.ft = g.ft; a.callAt = g.call; a.svcMult = g.svcMult; a.market = f.market;
-  const board = g.persona === 'prm' ? f.dep - 32 * 60 : g.persona === 'family' ? f.dep - (24 + R() * 4) * 60 : f.dep - (6 + R() * 20) * 60;
+  // Remote stands board earlier by the bus ride.
+  const bus = f.gate && f.gate.remote ? f.gate.busMin * 60 : 0;
+  const board = (g.persona === 'prm' ? f.dep - 32 * 60 : g.persona === 'family' ? f.dep - (24 + R() * 4) * 60 : f.dep - (6 + R() * 20) * 60) - bus;
   a.boardAt = Math.max(a.callAt + 300, board);
   a.preAt = f.us ? f.dep - 110 * 60 : Infinity;
 }
@@ -51,14 +53,18 @@ function goSec(a, ts, G) {
   a.stage = ST.D_TO_SEC; setPath(a, [{ x: tmp.x, y: tmp.y }]);
 }
 function checkMissed(a, t) {
-  if (!a.missed && t > a.f.dep - 300) { a.missed = true; sim.ts[a.term].missed++; }
+  if (!a.missed && t > a.f.dep - 300 - (a.gate.remote ? a.gate.busMin * 60 : 0)) {
+    a.missed = true; sim.ts[a.term].missed++;
+    const k = a.gate.remote ? 'remote' : a.gate.pier; sim.missedPier[k] = (sim.missedPier[k] || 0) + 1;
+  }
 }
 function routeToGate(a, G) {
   const g = a.gate, p = G.pierById[g.pier];
-  const along = p.horizontal ? { x: g.spine.x + jit(4), y: p.root.y + jit(5) } : { x: p.root.x + jit(5), y: g.spine.y + jit(4) };
   const pts = [];
   if (a.pre) pts.push({ x: G.preclear.door.x + 8, y: G.preclear.door.y + jit(6) });
-  pts.push({ x: p.inner.x + jit(6), y: p.inner.y + jit(4) }, { x: p.root.x + (p.horizontal ? 0 : jit(5)), y: p.root.y + (p.horizontal ? jit(5) : 0) }, along, randIn(g.hold, 1));
+  pts.push({ x: p.entry.x + jit(5), y: p.entry.y + jit(2), k: p.kEntry }, { x: p.root.x + jit(3), y: p.root.y + jit(3), k: p.k });
+  for (const q of g.route) pts.push({ x: q.x + jit(2), y: q.y + jit(2), k: q.k });
+  pts.push(randIn(g.hold, 1));
   return pts;
 }
 function loungeWander(G) { return randIn({ x: G.air.x + 4, y: G.air.y + G.air.h - 4, w: G.air.w - 8, h: Y.dfTop - G.air.y - G.air.h + 2 }, 1); }
@@ -106,6 +112,7 @@ defStage('D_TO_SEC', Z.LAND, 'To security', (a, dt, t) => {
   if (!walkPath(a, a.v * dt)) return;
   const ts = sim.ts[a.term];
   a.inFt = a.ft; (a.ft ? ts.ftQ : ts.secQ).push(a); a.qJoin = t; a.stage = ST.D_SEC_Q;
+  sim.obs.sec[a.term][hourOfT(t)]++;
 });
 defStage('D_SEC_Q', Z.SEC, 'Security queue', (a, dt, t) => {
   checkMissed(a, t);

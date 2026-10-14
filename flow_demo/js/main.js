@@ -20,7 +20,7 @@ mapCv.addEventListener('wheel', e => {
   const r = mapCv.getBoundingClientRect();
   zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015));
 }, { passive: false });
-mapCv.addEventListener('dblclick', () => flyTo(WORLD));
+mapCv.addEventListener('dblclick', () => flyTo(siteOn() ? SITE_RECT : WORLD));
 function zoomAt(mx, my, f) {
   const fitS = Math.min(view.cw / WORLD.w, view.ch / WORLD.h);
   const ns = clamp(view.s * f, fitS * 0.8, fitS * 14);
@@ -29,13 +29,15 @@ function zoomAt(mx, my, f) {
 }
 $('zin').onclick = () => zoomAt(view.cw / 2, view.ch / 2, 1.4);
 $('zout').onclick = () => zoomAt(view.cw / 2, view.ch / 2, 1 / 1.4);
-$('zfit').onclick = () => flyTo(WORLD);
+$('zfit').onclick = () => flyTo(siteOn() ? SITE_RECT : WORLD);
 function pick(e) {
   const r = mapCv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
   let best = null, bd = 12 * 12;
+  const site = siteOn();
   for (const a of sim.alive) {
-    if (a.hidden) continue;
-    const sx = a.x * view.s + view.ox - mx, sy = a.y * view.s + view.oy - my, d = sx * sx + sy * sy;
+    if (a.hidden || (site && !Number.isFinite(a._sx))) continue;
+    const ax = site ? a._sx : a.x, ay = site ? a._sy : a.y;
+    const sx = ax * view.s + view.ox - mx, sy = ay * view.s + view.oy - my, d = sx * sx + sy * sy;
     if (d < bd) { bd = d; best = a; }
   }
   state.selected = best; updateFollow();
@@ -101,6 +103,7 @@ function frame(now) {
   perf.frames.push(realDt * 1000); if (perf.frames.length > 120) perf.frames.shift();
   if (now - panelAt > 250) {
     panelAt = now; updatePanels(); renderTimelines(); renderPlay();
+    if (studioOpen() && now - (frame.hzAt || 0) > 1000) { frame.hzAt = now; drawToday(); }
     if (now - (frame.hashAt || 0) > 5000 && state.seekTarget == null) { frame.hashAt = now; writeHash(); }
     if ($('perf').classList.contains('show')) {
       const f = [...perf.frames].sort((a, b) => a - b), p95 = f[Math.floor(f.length * 0.95)] || 0;
@@ -126,6 +129,7 @@ function init() {
   $('storyBtn').onclick = () => (story.running ? storyStop() : storyStart());
   $('helpBtn').onclick = toggleHelp; $('briefBtn').onclick = openBriefing;
   setTimeout(() => computeRisk(0), 1500);
+  setTimeout(() => hzCalibrate(), 2500);
   if (!localStorageGet('dubtwin.seenHelp')) setTimeout(() => { if (!story.running) showHint(); }, 1200);
 }
 function localStorageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }

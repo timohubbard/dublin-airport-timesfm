@@ -38,6 +38,7 @@ defStage('A_DEPLANE', Z.CORR, 'Arrivals corridor', (a, dt, t) => {
 defStage('A_TO_IMM', Z.IMM, 'To passport control', (a, dt, t) => {
   if (!walkPath(a, a.v * dt)) return;
   immChannel(a).q.push(a); a.qJoin = t; a.stage = ST.A_IMM_Q;
+  if (!a.immCounted) { a.immCounted = true; sim.obs.imm[a.term][hourOfT(t)] += a.party.size; }
 });
 defStage('A_IMM_Q', Z.IMM, 'Passport control queue', (a, dt) => {
   const c = immChannel(a);

@@ -12,7 +12,7 @@
    De-icing frost or snow adds minutes to departures.
    Rain     wet hours push arriving passengers towards taxis.
    ==================================================================== */
-const RUNWAY = { normal: 58, lvp: 30, crosswindGust: 40, crosswindFactor: 0.75, stormGust: 55, storm: 12 };
+const RUNWAY = { normal: 64, lvp: 30, crosswindGust: 40, crosswindFactor: 0.75, stormGust: 55, storm: 12 };
 const DEICE = { frostC: 1.0, min: [8, 18] };
 const WX_DAY = di => (DATA.days[di] && DATA.days[di].weather) || null;
 
@@ -59,7 +59,7 @@ function runwayConfig(o) {
 /* Runway queue: every arrival lands and every departure takes off in a
    slot; slots per minute follow the hourly rate. Returns extra delay (s)
    per movement, in the order given. */
-function runwayQueue(moves, H) {
+function runwayQueue(moves, H, share = 1) {
   const order = moves.map((m, i) => i).sort((a, b) => moves[a].t - moves[b].t);
   const extra = new Float64Array(moves.length);
   let free = 0;
@@ -67,14 +67,14 @@ function runwayQueue(moves, H) {
     const want = moves[i].t;
     const start = Math.max(want, free);
     const h = clamp(Math.floor(start / 3600), 0, H.length - 1);
-    free = start + 3600 / runwayRate(H[h]);
+    free = start + 3600 / (runwayRate(H[h]) * share);
     extra[i] = start - want;
   }
   return extra;
 }
 
 /* Apply the day's weather to generated flights before gates are assigned. */
-function applyWeather(day, flights, arrs, rnd) {
+function applyWeather(day, flights, arrs, rnd, share = 0.5) {
   const H = hourlyWx(day, 'obs');
   if (!H) return null;
   // De-icing on frosty or snowy hours.
@@ -87,14 +87,15 @@ function applyWeather(day, flights, arrs, rnd) {
   }
   // Runway slots for arrivals (touchdown ~5 min before on-block) and departures.
   const moves = [...arrs.map(a => ({ t: a.onBlock - 300, a })), ...flights.map(f => ({ t: f.dep, f }))];
-  const extra = runwayQueue(moves, H);
+  const extra = runwayQueue(moves, H, share);
   let held = 0, maxHold = 0;
   moves.forEach((m, i) => {
     const e = extra[i];
     if (e <= 0) return;
     if (m.a) { m.a.onBlock += e; m.a.delay += e; m.a.held = e; }
     else { m.f.dep += e; m.f.delay += e; m.f.held = e; }
-    held++; maxHold = Math.max(maxHold, e);
+    if (e > 300) held++;
+    maxHold = Math.max(maxHold, e);
   });
   // A departure cannot leave before its inbound aircraft has turned round.
   for (const f of flights) if (f.inbound && f.dep < f.inbound.onBlock + 25 * 60) { const d = f.inbound.onBlock + 25 * 60 - f.dep; f.dep += d; f.delay += d; }

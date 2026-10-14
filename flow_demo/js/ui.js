@@ -17,7 +17,7 @@ function buildCalendar() {
   for (let i = 0; i < (first + 6) % 7; i++) cal.appendChild(document.createElement('div'));
   DATA.days.forEach((d, i) => {
     const b = document.createElement('button');
-    b.innerHTML = `${+d.date.slice(8)}${d.event ? '<span class="ev"></span>' : d.disruption ? '<span class="fog"></span>' : ''}<span class="risk"></span>`;
+    b.innerHTML = `${+d.date.slice(8)}${d.event ? '<span class="ev"></span>' : ''}${d.disruption ? `<span class="wxi" title="${d.disruption}">${wxIcon(d)}</span>` : ''}<span class="risk"></span>`;
     b.title = fmtDate(d.date, { weekday: 'long', day: 'numeric', month: 'long' }) + (d.event ? ` · ${d.event}` : '') + (d.disruption ? ` · ${d.disruption}` : '');
     b.onclick = () => loadDay(i);
     cal.appendChild(b);
@@ -31,7 +31,8 @@ function renderDayPanel() {
   const dep = gen.kindCount[KIND.DEP], arr = gen.kindCount[KIND.ARR], trf = gen.kindCount[KIND.TRF];
   $('dayinfo').innerHTML = `<div class="dname">${fmtDate(d.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
     ${d.event ? `<span class="dtag">${d.event}</span>` : ''}${d.disruption ? `<span class="dtag fog">${d.disruption}</span>` : ''}
-    <div class="dmeta">${fmtInt(dep)} departing · ${fmtInt(arr)} arriving · ${fmtInt(trf)} connecting<br>${gen.flights.length} departures and ${gen.arrFlights.length} arrivals · ${new Set(gen.flights.map(f => f.code)).size} airports · avg delay ${d.delayMin.toFixed(0)} min</div>`;
+    <div class="dmeta">${fmtInt(dep)} departing · ${fmtInt(arr)} arriving · ${fmtInt(trf)} connecting<br>${gen.flights.length} departures and ${gen.arrFlights.length} arrivals · ${new Set(gen.flights.map(f => f.code)).size} airports · avg delay ${d.delayMin.toFixed(0)} min</div>
+    ${wxLine(d)}`;
   $('clockDate').textContent = fmtDate(d.date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
   renderForecastTab();
   renderMix();
@@ -81,22 +82,23 @@ function pctCov(fam) {
   return r ? `${Math.round(r.cov80 * 100)}%` : '—';
 }
 /* Shapley split of the covariate forecast for both terminals: what each covariate group adds. */
-const GROUP_COLORS = { schedule: '#38bdf8', events: '#fbbf24', calendar: '#a78bfa' };
+const GROUP_COLORS = { schedule: '#38bdf8', events: '#fbbf24', calendar: '#a78bfa', weather: '#f472b6' };
 function whyParts(d = gen.day) {
-  const parts = { base: 0, schedule: 0, events: 0, calendar: 0 };
-  for (const k of TERMS) { const w = d[k].why; if (!w) return null; for (const g in parts) parts[g] += w[g]; }
+  const parts = { base: 0, schedule: 0, events: 0, calendar: 0, weather: 0 };
+  for (const k of TERMS) { const w = d[k].why; if (!w) return null; for (const g in parts) parts[g] += w[g] || 0; }
   return parts;
 }
 function renderWhy() {
   const d = gen.day, w = whyParts(d);
   if (!w) { $('why').innerHTML = '<div class="sub2">Explanations need the v2 export.</div>'; $('whyTotal').textContent = ''; return; }
-  const fc = w.base + w.schedule + w.events + w.calendar, act = d.t1.actual + d.t2.actual;
+  const fc = w.base + w.schedule + w.events + w.calendar + w.weather, act = d.t1.actual + d.t2.actual;
   const lo = d.t1.q[1] + d.t2.q[1], hi = d.t1.q[9] + d.t2.q[9];
   $('whyTotal').textContent = `both terminals`;
   const steps = [['Baseline', w.base, '#475569', 'TimesFM with the horizon\u2019s covariates neutralised: the schedule of the same weekday over the four weeks before the forecast was made, no event, no holiday'],
     ['Published schedule', w.schedule, GROUP_COLORS.schedule, 'Flights planned for the day versus the same weekday in the four weeks before the forecast (includes the seasonal ramp-up airlines have published)'],
     ['Event calendar', w.events, GROUP_COLORS.events, d.event ? `Flagged: ${d.event}` : 'No event flagged'],
-    ['Holidays & direction', w.calendar, GROUP_COLORS.calendar, 'School holidays and inbound/outbound event days']];
+    ['Holidays & direction', w.calendar, GROUP_COLORS.calendar, 'School holidays and inbound/outbound event days'],
+    ...(Math.abs(w.weather) >= 1 ? [['Weather forecast', w.weather, GROUP_COLORS.weather, 'ECMWF AIFS forecast, used when its own risk model flags the day']] : [])];
   const max = Math.max(fc, act, w.base) * 1.04, min = Math.min(w.base, fc, act) * 0.9;
   const X = v => ((v - min) / (max - min) * 100).toFixed(2);
   let cum = 0, html = '';
@@ -124,11 +126,16 @@ function renderPlans() {
   $('plans').querySelectorAll('.plan').forEach(b => b.onclick = () => setPlan(b.dataset.k));
   const li = state.plan === 'hist' ? 5 : planLevelIndex(state.plan), idx = RISK_LEVELS.indexOf(li);
   const custom = !PRESET_KEYS.includes(state.plan);
-  $('riskbox').innerHTML = `<div class="rh"><span>Risk appetite</span><b class="${custom ? 'on' : ''}">${state.plan === 'hist' ? 'History only' : 'Plan for ' + LEVEL_NAME(li)}</b></div>
+  $('riskbox').innerHTML = `<div class="seg src" role="radiogroup" aria-label="Forecast used">
+      <button class="${SRC.dayahead ? '' : 'on'}" data-v="0" role="radio" aria-checked="${!SRC.dayahead}">Plan made ${fmtDate(META.origin || DATA.days[0].date, { day: 'numeric', month: 'short' })}</button>
+      <button class="${SRC.dayahead ? 'on' : ''}" data-v="1" role="radio" aria-checked="${SRC.dayahead}">Updated the day before</button></div>
+    <div class="sub2" style="margin:4px 0 8px">${SRC.dayahead ? 'Re-forecast each evening with the latest passengers and the latest ECMWF weather forecast.' : 'The 28-day forecast, as made at the start of the month.'}</div>
+    <div class="rh"><span>Risk appetite</span><b class="${custom ? 'on' : ''}">${state.plan === 'hist' ? 'History only' : 'Plan for ' + LEVEL_NAME(li)}</b></div>
     <input type="range" id="risk" min="0" max="${RISK_LEVELS.length - 1}" step="1" value="${Math.max(0, idx)}" aria-label="Forecast quantile to roster for">
     <div class="rt">${RISK_LEVELS.map(i => `<span>${LEVEL_NAME(i)}</span>`).join('')}</div>
     <div class="sub2">Rosters for the calibrated quantile you choose: P50 is the most likely demand, P95 covers 19 days in 20.</div>`;
   $('risk').oninput = e => setPlan('q' + RISK_LEVELS[+e.target.value]);
+  $('riskbox').querySelectorAll('.src button').forEach(b => b.onclick = () => { SRC.dayahead = b.dataset.v === '1'; setPlan(state.plan); });
 }
 function renderAdj() {
   let html = `<span></span><span class="hdr">T1</span><span class="hdr">T2</span>`;
@@ -174,7 +181,7 @@ function renderDecision() {
     <span>${curTxt}</span>${rec.key !== state.plan && !(rec.key === 'q5' && state.plan === 'tfm') && !(rec.key === 'q9' && state.plan === 'p90') ? `<button class="linkbtn" id="useRec">Use ${LEVEL_NAME(planLevelIndex(rec.key))}</button>` : ''}</div>`;
   if ($('useRec')) $('useRec').onclick = () => setPlan(rec.key);
   const al = alertsFor(gen);
-  $('alerts').innerHTML = al.length ? al.map((a, i) => `<div class="alert"><span>${a.text}</span>${a.extra ? `<button class="linkbtn" data-i="${i}">+${a.extra} ${a.res === 'sec' ? 'lane' : 'officer'}${a.extra > 1 ? 's' : ''}</button>` : '<em>at capacity</em>'}</div>`).join('')
+  $('alerts').innerHTML = al.length ? al.map((a, i) => `<div class="alert ${a.weather ? 'wx' : ''}"><span>${a.text}</span>${a.weather ? '' : a.extra ? `<button class="linkbtn" data-i="${i}">+${a.extra} ${a.res === 'sec' ? 'lane' : 'officer'}${a.extra > 1 ? 's' : ''}</button>` : '<em>at capacity</em>'}</div>`).join('')
     : `<div class="ok">No window breaks the service wait even if demand lands on P90.</div>`;
   $('alerts').querySelectorAll('button').forEach(b => b.onclick = () => { const a = al[+b.dataset.i]; adjust(a.res, a.key, a.extra); });
 }
@@ -209,6 +216,27 @@ function drawPareto(pts) {
   }
   g.textAlign = 'left'; g.textBaseline = 'top'; g.fillStyle = '#5a6a86';
   g.fillText('% within 15 min, expected · – after the day', ml + 4, mt);
+}
+
+/* ---- weather summaries ---- */
+function wxIcon(d) {
+  const w = d.weather, n = d.disruption || '';
+  if (/Storm/.test(n)) return '🌪';
+  if (/Snow|Freezing/.test(n)) return '🌨';
+  if (/Fog|visibility/i.test(n)) return '🌫';
+  if (/Wind/.test(n)) return '💨';
+  return w && w.obs.rain >= 5 ? '🌧' : '⛅';
+}
+function wxLine(d) {
+  const w = d.weather; if (!w) return '';
+  const o = w.obs, r = w.riskDayAhead || {};
+  const bits = [`${Math.round(o.tmin)}–${Math.round(o.tmax)}°C`, `gusts ${Math.round(o.gust)} kt`, `${o.rain.toFixed(1)} mm rain`];
+  if (o.lvpHours) bits.push(`${o.lvpHours} h low visibility`);
+  if (o.snow) bits.push('snow showers');
+  if (o.tmin <= 1) bits.push('frost: de-icing');
+  const held = gen && gen.wxMaxHold > 300 ? ` · runway holding up to ${Math.round(gen.wxMaxHold / 60)} min (${gen.wxHeld} movements over 5 min)` : '';
+  return `<div class="dwx"><span class="wxi">${wxIcon(d)}</span><span>${bits.join(' · ')}${d.disruption ? ` · <b>${d.disruption}</b> (${w.disruption.cancelPct}% cancelled)` : ''}${held}</span>
+    <span class="sub2">Disruption risk the day before: IFS ${Math.round((r.ifs || 0) * 100)}% · AIFS ${Math.round((r.aifs || 0) * 100)}% (usual ${Math.round(((DATA.weather.climateRisk || {}).any || 0.05) * 100)}%)</span></div>`;
 }
 
 /* ---- left tabs and the scenario panel ---- */
@@ -320,6 +348,7 @@ function updatePanels() {
   else if (state.tab === 'com') updateComTab();
   else updatePeopleTab(cnt);
   updateFollow();
+  renderWeatherBadge();
 }
 function updateDepTab() {
   for (const k of TERMS) {
@@ -333,7 +362,30 @@ function updateDepTab() {
     setK(root, 'peak', `${Math.round(ts.peak / 60)}m`); setK(root, 'within', ts.served ? `${(ts.within / ts.served * 100).toFixed(1)}%` : '—');
     setK(root, 'missed', fmtInt(ts.missed)); root.querySelector('[data-k="missed"]').style.color = ts.missed ? '#fb7185' : '';
   }
+  renderWalks();
   renderBoard();
+}
+/* Walking time from security to each pier's gates, today's departures per
+   pier, and missed flights so far. Distances follow the real piers. */
+const WALK_V = { avg: 1.25, prm: PERSONAS.prm.speed };
+function renderWalks() {
+  const el = $('walks'); if (!el) return;
+  const rows = [];
+  for (const k of TERMS) for (const p of GEO[k].piers) {
+    if (!p.gates.length) continue;
+    const m = p.gates.map(gateWalkM), lo = Math.min(...m), hi = Math.max(...m);
+    const deps = gen.flights.filter(f => f.gate && f.gate.pier === p.id && !f.gate.remote).length;
+    rows.push({ name: `${GEO[k].short} ${p.name}`, ids: `${p.gates[0].id}–${p.gates[p.gates.length - 1].id}`, lo, hi, deps, missed: sim.missedPier[p.id] || 0 });
+  }
+  const rem = gen.flights.filter(f => f.gate && f.gate.remote);
+  if (rem.length) {
+    const b = rem.map(f => f.gate.busMin);
+    rows.push({ name: 'Remote, by bus', ids: `${Math.min(...b).toFixed(0)}–${Math.max(...b).toFixed(0)} min bus`, bus: true, deps: rem.length, missed: sim.missedPier.remote || 0 });
+  }
+  const mins = (mm, v) => Math.round(mm / v / 60);
+  const html = `<tr><th>Pier</th><th>Metres</th><th title="1.25 m/s">Walk</th><th title="Reduced mobility, ${WALK_V.prm} m/s">PRM</th><th>Flights</th><th>Missed</th></tr>` +
+    rows.map(r => `<tr><td class="l">${r.name}<span class="sub2"> ${r.ids}</span></td>${r.bus ? '<td colspan="3" class="sub2">bus from gate 335 / 221 / Pier 4</td>' : `<td>${fmtInt(r.lo)}–${fmtInt(r.hi)}</td><td>${mins(r.lo, WALK_V.avg)}–${mins(r.hi, WALK_V.avg)}′</td><td>${mins(r.lo, WALK_V.prm)}–${mins(r.hi, WALK_V.prm)}′</td>`}<td>${r.deps}</td><td style="${r.missed ? 'color:#fb7185' : ''}">${r.missed}</td></tr>`).join('');
+  if (el.innerHTML !== html) el.innerHTML = html;
 }
 function updateArrTab(t) {
   for (const k of TERMS) {
@@ -458,7 +510,7 @@ function updateFollow() {
     if (g.af) rows.push(['Arrived from', `${g.af.origin} (${g.af.code}) · ${fmtHM(g.af.onBlock)}`]);
     if (g.f) {
       rows.push(['Destination', `${g.f.dest} (${g.f.code})`], ['Flight', `${g.f.no} · ${g.f.ac} · ${GEO[g.term].short}${g.f.us ? ' · US preclear' : ''}`]);
-      rows.push(['Gate', `${g.f.gate.id} · ${GEO[g.term].pierById[g.f.gate.pier].name}`], ['Departs', `${fmtHM(g.f.std)}${g.f.delay ? ` <span style="color:var(--warn)">→ ${fmtHM(g.f.dep)}</span>` : ''}`]);
+      rows.push(['Gate', `${g.f.gate.id} · ${g.f.gate.remote ? `remote stand, ${Math.round(g.f.gate.busMin)} min bus` : `${GEO[g.term].pierById[g.f.gate.pier].name}, ${fmtInt(gateWalkM(g.f.gate))} m (${Math.round(gateWalkM(g.f.gate) / a.v / 60)} min at their pace)`}`], ['Departs', `${fmtHM(g.f.std)}${g.f.delay ? ` <span style="color:var(--warn)">→ ${fmtHM(g.f.dep)}</span>` : ''}`]);
     }
     if (a.kind === KIND.DEP) {
       rows.push(['Came by', MODE_NAMES[g.mode] || g.mode], ['Bags', g.bags ? `${g.bags} checked` : 'Hand luggage only'], ['Security', `${g.ft ? 'Fast Track' : 'Standard'}${a.wait >= 0 ? ` · waited ${Math.round(a.wait / 60)} min` : ''}`]);
@@ -504,7 +556,12 @@ function buildSegs() {
   $('resSeg').querySelectorAll('button').forEach(b => b.onclick = () => { state.res = b.dataset.v; renderSegs(); renderTimelines(); });
 }
 function goPreset(k) {
-  flyTo(PRESETS[k].rect);
+  const site = !!PRESETS[k].site;
+  if (site !== siteOn()) {
+    // Switching between the twin and the real map: jump, the frames differ.
+    state.site = site; bgKey = ''; view.anim = null; Object.assign(view, fitRect(PRESETS[k].rect)); view.fit = false;
+    renderSegs();
+  } else flyTo(PRESETS[k].rect);
   const tab = { D: 'dep', A: 'arr', L: 'land', B: 'arr' }[k];
   if (tab) setTab(tab);
   if (k === 'B') { state.res = 'bags'; renderSegs(); }
@@ -513,6 +570,7 @@ function goPreset(k) {
 function renderSegs() {
   $('speedSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', +b.dataset.v === state.speed));
   $('colorSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === state.colorMode));
+  $('presetSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === 'S' ? siteOn() : false));
   $('resSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === state.res));
   const keys = {
     sec: '<span><i class="mk"></i>Arrivals by market /15 min</span><span><i style="background:var(--accent)"></i>Capacity</span><span><i style="background:var(--bad)"></i>Wait</span>',

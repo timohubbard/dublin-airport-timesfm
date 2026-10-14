@@ -48,7 +48,7 @@ function renderStudio() {
   const S = STUDIO_SERIES.find(s => s.id === studio.series);
   $('studio').innerHTML = `
     <div class="sthead">
-      <div class="stt"><b>Forecast Studio</b><span>TimesFM 3 zero-shot · forecast made ${fmtDate(M.origin, { day: 'numeric', month: 'short', year: 'numeric' })} · ${M.horizon} days ahead · scored on ${bt.origins} weekly backtest origins</span></div>
+      <div class="stt"><b>Forecast Studio</b><span>TimesFM 3 zero-shot · three horizons: ${M.horizon} days from ${fmtDate(M.origin, { day: 'numeric', month: 'short' })}, refreshed each evening, and hour by hour today · scored on ${bt.origins} weekly backtest origins</span></div>
       <div class="seg" id="stSeries">${STUDIO_SERIES.map(s => `<button data-v="${s.id}" class="${s.id === studio.series ? 'on' : ''}">${s.name}</button>`).join('')}</div>
       <button class="stclose" id="stClose" aria-label="Close the Forecast Studio">×</button>
     </div>
@@ -61,6 +61,13 @@ function renderStudio() {
         <div class="stkey"><span><i class="ln" style="background:#cbd5e1"></i>Actual</span><span><i class="ln" style="background:#2dd4bf"></i>TimesFM + schedule & events (median)</span><span><i class="bx" style="background:rgba(45,212,191,.35)"></i>80% band</span><span><i class="bx" style="background:rgba(45,212,191,.14)"></i>90% band</span><span><i class="ln dash" style="background:#fb923c"></i>History only</span><span><i class="ln dash" style="background:#5eead4"></i>Week-ahead forecast (backtest)</span><span><i class="bx" style="background:rgba(251,191,36,.25)"></i>Event</span></div>
       </section>
       <section class="stc"><h4>How good is it?</h4><div id="stKpi" class="kpis"></div></section>
+      <section class="stc"><div class="sth"><h4>Week ahead <small>the plan against the evening-before refresh</small></h4></div>
+        <canvas id="stWeek" aria-label="The next seven days: the monthly plan against the day-before refresh"></canvas><div class="sub2" id="stWeekNote"></div></section>
+      <section class="stc span2"><div class="sth"><h4>Today, hour by hour <small>live nowcast</small></h4>
+        <div class="seg" id="stHz">${Object.entries(HZ_SERIES).map(([k, v]) => `<button data-v="${k}" class="${k === hzState.series ? 'on' : ''}">${v.short}</button>`).join('')}</div></div>
+        <div class="stread" id="stTodayRead"></div>
+        <canvas id="stToday" class="tall" aria-label="Hourly forecast for the selected day with the live nowcast"></canvas>
+        <div class="sub2" id="stTodayNote"></div></section>
       <section class="stc"><h4>Why ${fmtDate(DATA.days[state.di].date, { weekday: 'short', day: 'numeric', month: 'short' })} looks like this</h4><div id="stWhy"></div></section>
       <section class="stc span2"><div class="sth"><h4>Track record: forecast a week ahead vs what happened</h4><span class="sub2" id="stTrackSub"></span></div>
         <canvas id="stTrack" aria-label="Week-ahead forecast against actuals over the backtest year"></canvas></section>
@@ -69,6 +76,11 @@ function renderStudio() {
         <table class="mtab lb" id="stLb"></table><div class="sub2" id="stLbNote"></div></section>
       <section class="stc"><h4>Are the bands honest?</h4><canvas id="stRel" class="sq" aria-label="Reliability diagram"></canvas>
         <div class="sub2">Share of actuals at or below each forecast quantile, on origins the calibration never saw. On the diagonal = honest.</div></section>
+      <section class="stc span2"><div class="sth"><h4>Weather: ECMWF physics (IFS) vs AI (AIFS)</h4><span class="sub2">${(DATA.weather && DATA.weather.sources) || ''}</span></div>
+        <div class="wxgrid"><div><div class="stread" id="stWxDay"></div><canvas id="stWxLead" aria-label="Disruption risk as the day approached"></canvas>
+          <div class="sub2">Disruption probability from the forecast issued 7 days, 6 days … 1 day before the selected day. Dashed: the usual rate.</div></div>
+          <div><canvas id="stWxSkill" aria-label="Wind forecast error by lead time, IFS against AIFS"></canvas>
+          <div class="sub2" id="stWxSkillNote"></div><table class="mtab lb" id="stWxValue"></table></div></div></section>
       <section class="stc"><h4>Grounded in real data</h4><canvas id="stCso" aria-label="CSO monthly passengers at Dublin Airport"></canvas><div class="sub2" id="stCsoNote"></div></section>
       <section class="stc"><h4>Method</h4><ul class="method">
         <li><b>Zero-shot TimesFM 3</b> (${M.checkpoint}), no fine-tuning, on Apple-silicon MLX.</li>
@@ -81,9 +93,10 @@ function renderStudio() {
     </div>`;
   $('stClose').onclick = toggleStudio;
   $('stSeries').querySelectorAll('button').forEach(b => b.onclick = () => { studio.series = b.dataset.v; renderStudio(); });
-  $('stReveal').onchange = e => { studio.reveal = e.target.checked; drawFan(S); };
+  $('stReveal').onchange = e => { studio.reveal = e.target.checked; drawFan(S); drawWeek(S); drawToday(); };
   $('stSlice').onchange = e => { studio.slice = e.target.value; renderLeaderboard(S); };
-  requestAnimationFrame(() => { drawFan(S); drawTrack(S); renderKpis(S); renderStudioWhy(S); renderLeaderboard(S); drawReliability(); drawCso(); });
+  $('stHz').querySelectorAll('button').forEach(b => b.onclick = () => { hzState.series = b.dataset.v; $('stHz').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); drawToday(); hzNotes(); });
+  requestAnimationFrame(() => { drawWeek(S); drawToday(); hzNotes(); drawFan(S); drawTrack(S); renderKpis(S); renderStudioWhy(S); renderLeaderboard(S); drawReliability(); drawCso(); renderStudioWeather(S); });
 }
 
 function stCanvas(cv, m = { l: 46, r: 12, t: 10, b: 22 }) {
@@ -227,7 +240,8 @@ function renderStudioWhy(S) {
   const n = S.node(DATA.days[state.di]), w = n.why;
   if (!w) { $('stWhy').innerHTML = ''; return; }
   const parts = [['Baseline', w.base, '#475569'], ['Published schedule', w.schedule, GROUP_COLORS.schedule], ['Event calendar', w.events, GROUP_COLORS.events], ['Holidays & direction', w.calendar, GROUP_COLORS.calendar]];
-  const fc = w.base + w.schedule + w.events + w.calendar;
+  if (w.weather != null) parts.push(['Weather forecast', w.weather, GROUP_COLORS.weather]);
+  const fc = parts.reduce((x, p) => x + p[1], 0);
   const vmax = Math.max(fc, w.base, n.actual) * 1.03, vmin = Math.min(fc, w.base, n.actual) * 0.92;
   const X = v => ((v - vmin) / (vmax - vmin) * 100).toFixed(2);
   let cum = 0;
@@ -284,4 +298,74 @@ function drawCso() {
   g.fillStyle = '#5a6a86'; g.textAlign = 'center'; g.textBaseline = 'top';
   cso.months.forEach((m, i) => { if (m.endsWith('-01')) g.fillText(m.slice(0, 4), X(i), mt + H + 5); });
   $('stCsoNote').innerHTML = `Bars: CSO monthly passengers at Dublin (TAM08); the synthetic daily history is calibrated to match every month exactly. Gold: rolling 12 months, ${(cso.rolling12 / 1e6).toFixed(1)}m to ${cso.rolling12Month}. Dashed: the 32m planning cap (reference only). Source: ${cso.source}.`;
+}
+
+/* ---- weather card ---- */
+function renderStudioWeather(S) {
+  const day = DATA.days[state.di], w = day.weather;
+  if (!w || !DATA.weather) return;
+  const o = w.obs, fa = w.hourly.dayAhead;
+  const mx = arr => Math.max(...arr.filter(v => v != null));
+  const sum = arr => arr.reduce((a, v) => a + (v || 0), 0);
+  const fogH = m => fa[m].dpd.filter((v, i) => v != null && v <= 1 && (fa[m].wind[i] || 0) < 6.5).length;
+  const row = (name, obs, ifs, aifs) => `<span>${name}: observed <b>${obs}</b> · IFS <b class="c">${ifs}</b> · AIFS <b class="ai">${aifs}</b></span>`;
+  $('stWxDay').innerHTML = `<b>${fmtDate(day.date, { weekday: 'short', day: 'numeric', month: 'short' })}</b>${day.disruption ? ` · <span class="ev">${day.disruption}</span>` : ' · no weather disruption'}
+    ${row('max wind', `${Math.round(o.windMax)} kt`, `${Math.round(mx(fa.ifs.wind))} kt`, `${Math.round(mx(fa.aifs.wind))} kt`)}
+    ${row('rain', `${o.rain} mm`, `${sum(fa.ifs.rain).toFixed(1)} mm`, `${sum(fa.aifs.rain).toFixed(1)} mm`)}
+    ${row('low temp', `${Math.round(o.tmin)}°`, `${Math.round(Math.min(...fa.ifs.temp))}°`, `${Math.round(Math.min(...fa.aifs.temp))}°`)}
+    ${row('fog hours', o.lvpHours, fogH('ifs'), fogH('aifs'))}
+    <span class="sub2">Day-ahead forecasts as issued. Gusts observed: ${Math.round(o.gust)} kt.</span>`;
+  drawWxLead(w);
+  drawWxSkill();
+  const lb = (DATA.accuracy.leaderboard || []).filter(r => r.family === S.fam);
+  const get = (sl, m) => (lb.find(r => r.slice === sl && r.model === m) || {}).wape;
+  const comp = (DATA.accuracy.comparisons || []).filter(r => r.family === S.fam && r.vs === 'covariates');
+  const ci = (ref, sl) => { const c = comp.find(r => r.ref === ref && r.slice === sl); return c ? ` <span class="sub2">${(c.diff * 100).toFixed(2)} [${(c.lo * 100).toFixed(2)}, ${(c.hi * 100).toFixed(2)}]</span>` : ''; };
+  const models = [['covariates', 'No weather'], ['cov_ifs', '+ IFS weather'], ['cov_aifs', '+ AIFS weather'], ['gate_aifs', 'AIFS, only when flagged']];
+  const n = (lb.find(r => r.slice === 'disruption_wk1') || {}).n_days || 0;
+  $('stWxValue').innerHTML = `<tr><th>TimesFM ${S.name.includes('Terminal') ? 'terminals' : ''}</th><th>All days</th><th title="Weather-disrupted days 1–7 days ahead, where the weather forecast exists">Disrupted, wk 1</th></tr>` +
+    models.map(([m, name]) => `<tr class="${m === (DATA.meta.production || {}).model ? 'me' : ''}"><td class="l">${name}</td><td>${get('all', m) != null ? (get('all', m) * 100).toFixed(2) + '%' : '—'}${m !== 'covariates' ? ci(m, 'all') : ''}</td><td>${get('disruption_wk1', m) != null ? (get('disruption_wk1', m) * 100).toFixed(2) + '%' : '—'}${m !== 'covariates' ? ci(m, 'disruption_wk1') : ''}</td></tr>`).join('') +
+    `<tr class="tot"><td colspan="3">WAPE on unseen origins; brackets: difference from no weather with 95% interval. Only ${n} disrupted days fall in week 1 of the scored half, so treat the gain as promising, not proven. Highlighted: the production model.</td></tr>`;
+}
+function drawWxLead(w) {
+  const cv = $('stWxLead'), c = stCanvas(cv, { l: 34, r: 10, t: 10, b: 22 }); if (!c) return;
+  const { g, ml, mt, W, H } = c, L = w.riskByLead, base = (DATA.weather.climateRisk || {}).any || 0.05;
+  const all = [...L.ifs, ...L.aifs].filter(v => v != null), top = Math.max(0.3, ...all) * 1.1;
+  const X = i => ml + (i + 0.5) / 7 * W, Y = v => mt + H - v / top * H;
+  g.fillStyle = '#5a6a86'; g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (let v = 0; v <= top; v += top > 0.6 ? 0.2 : 0.1) { g.strokeStyle = 'rgba(148,163,184,0.08)'; g.beginPath(); g.moveTo(ml, Y(v)); g.lineTo(ml + W, Y(v)); g.stroke(); g.fillText(Math.round(v * 100) + '%', ml - 4, Y(v)); }
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  for (let i = 0; i < 7; i++) g.fillText(`${7 - i}d`, X(i), mt + H + 5);
+  g.setLineDash([4, 3]); g.strokeStyle = 'rgba(203,213,225,0.45)'; g.beginPath(); g.moveTo(ml, Y(base)); g.lineTo(ml + W, Y(base)); g.stroke(); g.setLineDash([]);
+  for (const [m, col] of [['ifs', '#2dd4bf'], ['aifs', '#c084fc']]) {
+    g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 2; g.beginPath(); let on = false;
+    L[m].forEach((v, i) => { if (v == null) { on = false; return; } on ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)); on = true; }); g.stroke();
+    L[m].forEach((v, i) => { if (v != null) { g.beginPath(); g.arc(X(i), Y(v), 2.6, 0, 7); g.fill(); } });
+  }
+  g.font = '600 10px Inter, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top';
+  g.fillStyle = '#2dd4bf'; g.fillText('IFS', ml + 6, mt + 2); g.fillStyle = '#c084fc'; g.fillText('AIFS', ml + 36, mt + 2);
+  g.fillStyle = w.disruption.name ? '#fbbf24' : '#8b9bb6'; g.textAlign = 'right';
+  g.fillText(w.disruption.name ? `happened: ${w.disruption.name.toLowerCase()}` : 'happened: no disruption', ml + W, mt + 2);
+}
+function drawWxSkill() {
+  const cv = $('stWxSkill'), c = stCanvas(cv, { l: 34, r: 10, t: 10, b: 22 }); if (!c) return;
+  const { g, ml, mt, W, H } = c, sk = DATA.weather.skill || [];
+  const by = m => sk.filter(r => r.model === m).sort((a, b) => a.lead - b.lead);
+  const vals = sk.map(r => r.wind_mae_kt), top = Math.max(...vals) * 1.15;
+  const X = l => ml + (l - 0.5) / 7 * W, Y = v => mt + H - v / top * H;
+  g.fillStyle = '#5a6a86'; g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (let v = 0; v <= top; v += 1) { g.strokeStyle = 'rgba(148,163,184,0.08)'; g.beginPath(); g.moveTo(ml, Y(v)); g.lineTo(ml + W, Y(v)); g.stroke(); g.fillText(v + ' kt', ml - 4, Y(v)); }
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  for (let l = 1; l <= 7; l++) g.fillText(`${l}d`, X(l), mt + H + 5);
+  const bw = W / 7 * 0.32;
+  for (const [m, col, off] of [['ifs', '#2dd4bf', -0.5], ['aifs', '#c084fc', 0.5]]) {
+    g.fillStyle = col;
+    for (const r of by(m)) { const y = Y(r.wind_mae_kt); g.fillRect(X(r.lead) + off * bw - bw / 2, y, bw, mt + H - y); }
+  }
+  g.font = '600 10px Inter, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillStyle = '#8b9bb6';
+  g.fillText('Daily max wind error at Dublin, by lead time', ml + 4, mt);
+  const risk = (DATA.weather.riskScores || []).filter(r => r.target === 'any' && r.leads === '1-3');
+  const bss = m => (risk.find(r => r.model === m) || {}).brier_skill;
+  const i1 = by('ifs')[0], a1 = by('aifs')[0];
+  $('stWxSkillNote').innerHTML = `Day-ahead wind error: IFS <b style="color:#2dd4bf">${i1 ? i1.wind_mae_kt.toFixed(1) : '—'} kt</b>, AIFS <b style="color:#c084fc">${a1 ? a1.wind_mae_kt.toFixed(1) : '—'} kt</b>. Disruption-risk skill 1–3 days ahead (Brier skill vs climatology): IFS ${bss('ifs') != null ? bss('ifs').toFixed(2) : '—'}, AIFS ${bss('aifs') != null ? bss('aifs').toFixed(2) : '—'}. Scored Aug 2025 – Mar 2026.`;
 }

@@ -94,3 +94,57 @@ On the summit day the live taxi rank does worse than the outlook model expects (
 2. **The terminal split of UK and Europe city traffic** (55/45 across T1/T2) is my assumption. If DAA can share the real allocation, it slots straight into `real_data.T1_PART`.
 3. **Costs** (€38 an hour per screener, 5 per lane; €54 per officer-hour) and **the service goal** (95% within 15 minutes) are placeholders in `flow_demo/js/forecast.js` (`COST`).
 4. **TimesFM 3 weights are non-commercial.** Worth flagging before anything beyond a demo.
+
+---
+
+# Weather update, 14 October 2026
+
+The weather plan was approved: real Dublin weather, with ECMWF IFS (physics) set against AIFS (AI).
+
+## What changed
+
+**Data.** `weather_data.py` caches four sources in `reference_data/weather/`:
+- Met Éireann station 532, hourly
+- METAR for EIDW (IEM)
+- ECMWF IFS and AIFS forecasts **as issued**, 1–7 days ahead (Open-Meteo Previous Runs; IFS from Feb 2024, AIFS from Mar 2024)
+
+Met Éireann's warnings archive ends in August 2023, so warnings aren't used.
+
+**History.** The synthetic history now follows real weather:
+- Storm Darragh and Storm Éowyn cancel about 30% of flights.
+- Freezing fog, snow, strong winds and frost add cancellations and delays.
+- Rain lifts taxi demand.
+- The scripted 11 March fog day is gone. Real March 2026 had a wet, windy 12th (gusts 42 kt, 21 mm), snow showers on the 13th and 15th, and frosty mornings.
+
+**Forecasting:**
+- Weather forecast covariates are built per origin, with no hindsight (tested).
+- The disruption-risk model is scored against climatology.
+- The backtest has five weather variants, online conformal calibration, and Mondrian cells for weather-risk days.
+- The production model is **gated AIFS**: weather is used only when its own risk model flags the day.
+- A **day-before refresh** runs for every March day.
+
+**Twin:**
+- **Runway:** a rate model (low visibility, crosswind, storm), with de-icing and rain-driven taxi demand.
+- **Map:** a weather badge, fog haze and rain.
+- **Plans:** a choice between the plan made on 1 March and the plan updated the day before.
+- **Alerts and scenarios:** weather alerts, plus "Low visibility 06–11h" and "Storm" scenarios.
+- **Studio and tour:** a Studio weather card (risk build-up by lead, IFS vs AIFS skill, value of weather) and a weather step in the tour.
+
+## The honest headline
+
+- Always-on weather adds noise on ordinary days.
+- Gated AIFS is never worse and helps on disruption days in week 1: −0.53 points for terminals, but on only 9 days.
+- Weather is a 1–7 day signal. The real win is the day-before refresh: error across all series drops from 5.4% to 3.4% in March.
+- IFS forecasts wind more accurately; AIFS keeps more disruption-risk skill at 4–7 days.
+- Online calibration gives 77–81% coverage for 80% bands. That is a little under target in winter, because real weather makes winter errors larger.
+- MinT now costs about 0.1 point of accuracy for exact coherence. It used to improve accuracy slightly.
+
+## Verification (weather update)
+
+- `pytest`: 19 passed (including the as-issued leak guard and the Storm Éowyn check).
+- `DUB.runAllAsync()`: **84/84 pass** with weather on.
+- **March missed flights:** history only 445, P50 250, P90 192. Under P50 and P90 they all fall on 27 March, which is capacity-bound.
+- **Security peaks:** mean daily 12.9 / 5.0 / 4.4 min.
+- **Worst taxi wait:** 108 / 58 / 11 min.
+- **Runway holding:** calm days hold 8–57 movements for more than 5 minutes (up to about 10 min); windy 12 and 24 March about 75 (up to 16 min). The fog and storm scenarios hold for 2–3 hours.
+- **Performance, 12 March 09:15, weather on:** frame p95 8.4 ms, step 2.0 ms, render 2.4 ms.

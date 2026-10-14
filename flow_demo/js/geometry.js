@@ -6,55 +6,14 @@
    basement, ring road). Car parks sit on the flanks and the south strip.
    A schematic of the public daa terminal map, not to scale.
    ==================================================================== */
-const PIER_HW = 16, BRIDGE = 20, PL = 40, GATE_GAP = 48;
-const WORLD = { x: -270, y: 14, w: 1960, h: 1610 };
+const PIER_HW = 12, BRIDGE = 18;
+const WORLD = { x: -270, y: -205, w: 1960, h: 1830 };
 const Y = {
   lounge: 486, dfTop: 554, sec: 618, snake: 648, desk: 716, chkQ: 732, food: 776, door: 838,
   footDep: 849, kerbDep: 863, roadDep: 878,
   arrTop: 906, immBooth: 962, reclaimTop: 986, customs: 1073, rail: 1088, hallOutlets: 1114, arrDoor: 1140,
   footArr: 1150, bayArr: 1164, roadArr: 1186, base: 1236, ring: 1446,
 };
-
-function vPier(id, name, x, y0, y1, perSide, first, usFrom) {
-  const gates = [];
-  for (let k = 0; k < perSide; k++) {
-    const gy = y0 - 40 - k * GATE_GAP;
-    for (const side of [-1, 1]) {
-      const edge = x + side * PIER_HW;
-      gates.push({
-        id: String(first + k * 2 + (side < 0 ? 0 : 1)), pier: id, us: usFrom != null && k >= usFrom,
-        spine: { x, y: gy }, lane: { x: x + 6, y: gy },
-        hold: { x: side < 0 ? x - PIER_HW + 2 : x + 2, y: gy - 14, w: PIER_HW - 4, h: 28 },
-        bridgeA: { x: edge, y: gy }, door: { x: edge + side * BRIDGE, y: gy },
-        plane: { x: edge + side * (BRIDGE + PL / 2), y: gy, ang: side < 0 ? 0 : Math.PI },
-        lbl: { x: x + side * (PIER_HW + 5), y: gy - 16, align: side < 0 ? 'right' : 'left' },
-      });
-    }
-  }
-  return { id, name, horizontal: false, root: { x, y: y0 }, tip: { x, y: y1 }, inner: { x, y: y0 + 12 },
-    laneRoot: { x: x + 6, y: y0 + 4 },
-    rect: { x: x - PIER_HW, y: y1, w: PIER_HW * 2, h: y0 - y1 }, hub: { x: x - 36, y: y0 - 22, w: 72, h: 20 }, gates };
-}
-function hPier(id, name, y, x0, x1, perSide, first) {
-  const gates = [];
-  for (let k = 0; k < perSide; k++) {
-    const gx = x0 + 40 + k * GATE_GAP;
-    for (const side of [-1, 1]) {
-      const edge = y + side * PIER_HW;
-      gates.push({
-        id: String(first + k * 2 + (side < 0 ? 0 : 1)), pier: id, us: false,
-        spine: { x: gx, y }, lane: { x: gx, y: y + 6 },
-        hold: { x: gx - 14, y: side < 0 ? y - PIER_HW + 2 : y + 2, w: 28, h: PIER_HW - 4 },
-        bridgeA: { x: gx, y: edge }, door: { x: gx, y: edge + side * BRIDGE },
-        plane: { x: gx, y: edge + side * (BRIDGE + PL / 2), ang: side < 0 ? Math.PI / 2 : -Math.PI / 2 },
-        lbl: { x: gx + 16, y: y + side * (PIER_HW + 7), align: 'left' },
-      });
-    }
-  }
-  return { id, name, horizontal: true, root: { x: x0, y }, tip: { x: x1, y }, inner: { x: x0 - 12, y },
-    laneRoot: { x: x0 + 4, y: y + 6 },
-    rect: { x: x0, y: y - PIER_HW, w: x1 - x0, h: PIER_HW * 2 }, hub: { x: x0 + 2, y: y - 36, w: 22, h: 72 }, gates };
-}
 
 function makeTerminal(c) {
   const b = c.building, bx1 = b.x + b.w;
@@ -143,7 +102,6 @@ const GEO = {
       { key: 'A', label: 'Aer Lingus check-in', x0: 222, x1: 386, desks: 28 },
       { key: 'O', label: 'Other airlines', x0: 418, x1: 558, desks: 18 },
     ],
-    piers: [vPier('P4', 'Pier 4', 330, 478, 70, 8, 401, 4)],
     preclear: { x: 20, y: 492, w: 160, h: 104, door: { x: 200, y: 536 }, cbp: { x: 108, y: 500, w: 66, h: 88 }, lounge: { x: 26, y: 500, w: 76, h: 88 } },
     link: { dep: { x: 170, y: 820 }, arr: { x: 170, y: 1110 }, wall: 200 },
     arr: {
@@ -167,11 +125,6 @@ const GEO = {
       { key: 'R', label: 'Ryanair check-in', x0: 742, x1: 930, desks: 18 },
       { key: 'O', label: 'Other airlines', x0: 970, x1: 1158, desks: 24 },
     ],
-    piers: [
-      vPier('P1', 'Pier 1', 772, 478, 170, 6, 101),
-      vPier('P2', 'Pier 2', 1012, 478, 182, 6, 201),
-      hPier('P3', 'Pier 3', 540, 1180, 1548, 7, 301),
-    ],
     link: { dep: { x: 1230, y: 820 }, arr: { x: 1230, y: 1110 }, wall: 1180 },
     arr: {
       imm: { non: [740, 880], eu: [900, 1040], egate: [1060, 1160] },
@@ -187,27 +140,122 @@ const GEO = {
     dep: { kerb: [734, 1086], bayBus: [1102, 1120, 1138, 1156] },
   }),
 };
+/* ---- Piers, gates and stands: real geometry from OpenStreetMap ----
+   airport_geometry.py traces Dublin's piers and matches every OSM gate to
+   its stand. Here each terminal's airside is placed at true scale, turned
+   so real west is up (see AIRPORT_GEO.twin), above that terminal's section
+   stack. Walking along a pier in the twin is as long as the real walk. */
+const AG = window.AIRPORT_GEO || { piers: [], remote: [], twin: {} };
+const twinPt = (term, x, y) => ({ x: -y + AG.twin[term].dx, y: x + AG.twin[term].dy });
+const twinAng = a => a + Math.PI / 2;
+// What the twin cannot draw where it really is. The 332-337 bus lounge is the
+// real T1-T2 link, drawn along the twin's airside link; walking time is kept
+// real through the k factor (real metres per drawn unit).
+const PIER_TWIN = { P335: [{ x: 716, y: 533 }, { x: 584, y: 533 }] };
+// Shop and seating areas by each pier root, and the doors from the departures lounge (schematic).
+const PIER_HUB = {
+  P1: { x: 1226, y: 380, w: 84, h: 22 }, P2: { x: 886, y: 318, w: 76, h: 20 }, P3: { x: 812, y: 384, w: 22, h: 60 },
+  P4: { x: 492, y: 414, w: 76, h: 22 }, P335: { x: 612, y: 520, w: 72, h: 10 },
+};
+function projOn(pl, p) {
+  let best = null;
+  for (let i = 1; i < pl.pts.length; i++) {
+    const a = pl.pts[i - 1], b = pl.pts[i], L = pl.cum[i] - pl.cum[i - 1] || 1e-9;
+    const f = clamp(((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / (L * L), 0, 1);
+    const qx = a.x + f * (b.x - a.x), qy = a.y + f * (b.y - a.y), d = Math.hypot(p.x - qx, p.y - qy);
+    if (!best || d < best.d) best = { s: pl.cum[i - 1] + f * L, d, side: Math.sign((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) || 1 };
+  }
+  return best;
+}
+/* Points along a branch from its root to s, offset sideways by off. */
+function alongPts(br, s, off, k) {
+  const out = [];
+  for (let i = 1; i < br.pts.length && br.cum[i] < s - 0.5; i++) { const p = br.at(br.cum[i], off, {}); out.push({ x: p.x, y: p.y }); }
+  const e = br.at(s, off, {}); out.push({ x: e.x, y: e.y });
+  if (k !== 1) for (const p of out) p.k = k;
+  return out;
+}
+function realPier(P, G) {
+  const T = P.term, ov = PIER_TWIN[P.id];
+  const branches = P.branches.map(b => new Polyline(b.map(p => twinPt(T, p[0], p[1]))));
+  let k = 1;
+  if (ov) { const real = new Polyline(P.branches[0].map(p => ({ x: p[0], y: p[1] }))); branches[0] = new Polyline(ov); k = real.len / branches[0].len; }
+  const root = branches[0].pts[0], b = G.building;
+  const entry = ov ? { x: b.x + 8, y: root.y } : { x: clamp(root.x, b.x + 16, b.x + b.w - 16), y: b.y + 3 };
+  // The section stack draws terminals larger than they are: scale the walk from the
+  // lounge to the pier door so security → pier root takes the real distance.
+  const sec = { x: (G.laneX0 + G.laneX1) / 2, y: Y.sec - 14 };
+  const kEntry = clamp((P.securityToRootM - dist(entry, root) * k) / Math.max(1, dist(sec, entry)), 0.3, 1.5);
+  const pier = { id: P.id, name: P.name, term: T, branches, root, entry, end: P.end || 0, k, kEntry, sec, hub: PIER_HUB[P.id], gates: [], busGates: [], securityToRootM: P.securityToRootM };
+  for (const g of P.gates) {
+    const br = branches[g.branch], gp = twinPt(T, g.x, g.y);
+    let s, u;
+    if (ov) { s = g.along / k; const n = br.at(s, 1, {}); const side = /[13579]$/.test(g.id) ? 1 : -1; u = { x: (n.x - br.at(s, 0, {}).x) * side, y: (n.y - br.at(s, 0, {}).y) * side }; }
+    else {
+      const pr = projOn(br, gp); s = pr.s;
+      if (pier.end && s > br.len - pier.end * 0.6) {
+        // Rotunda: gates sit around the end of the pier.
+        s = br.len; const c = br.pts[br.pts.length - 1], d = Math.hypot(gp.x - c.x, gp.y - c.y) || 1;
+        u = { x: (gp.x - c.x) / d, y: (gp.y - c.y) / d };
+      } else { const c = br.at(s, 0, {}), n = br.at(s, 1, {}); u = { x: (n.x - c.x) * pr.side, y: (n.y - c.y) * pr.side }; }
+    }
+    const spine = br.at(s, 0, {}), R = pier.end && s >= br.len - 0.5 ? pier.end : PIER_HW;
+    const at = r => ({ x: spine.x + u.x * r, y: spine.y + u.y * r });
+    const hc = at(R - 6), edge = at(R);
+    const gate = {
+      id: g.id, pier: P.id, term: T, us: !!g.us, bus: !!g.bus, level: g.level, branch: g.branch, along: s, walkM: g.walkM,
+      spine: { x: spine.x, y: spine.y }, hold: { x: hc.x - 6, y: hc.y - 6, w: 12, h: 12 }, bridgeA: edge,
+      route: alongPts(br, s, 0, k), laneBack: alongPts(br, s, -4, k).reverse(),
+      lbl: { ...at(R + 7), align: u.x < -0.3 ? 'right' : u.x > 0.3 ? 'left' : 'center' },
+    };
+    if (g.stand) {
+      const d = twinPt(T, g.stand.door[0], g.stand.door[1]), c = twinPt(T, g.stand.plane[0], g.stand.plane[1]);
+      gate.door = d; gate.plane = { x: c.x, y: c.y, ang: twinAng(g.stand.ang) }; gate.standRef = g.stand.ref;
+    } else {
+      const d = at(R + BRIDGE); gate.door = d; gate.plane = { x: d.x + u.x * 22, y: d.y + u.y * 22, ang: Math.atan2(-u.y, -u.x) };
+    }
+    (g.bus ? pier.busGates : pier.gates).push(gate);
+  }
+  return pier;
+}
 for (const k of TERMS) {
   const G = GEO[k];
+  G.piers = AG.piers.filter(P => P.term === k).map(P => realPier(P, G));
   G.gates = G.piers.flatMap(p => p.gates);
+  G.busGates = G.piers.flatMap(p => p.busGates);
   G.pierById = Object.fromEntries(G.piers.map(p => [p.id, p]));
-  for (const g of G.gates) g.term = k;
 }
 const ALL_GATES = TERMS.flatMap(k => GEO[k].gates);
-const REMOTE_STANDS = [130, 210, 290, 370, 450].flatMap(y => [-215, -150, -85, -20].map(x => [x, y]))
-  .map(([x, y], i) => ({ id: `R${i + 1}`, plane: { x, y, ang: 0 } }));
-/* Remote stands are served as bus gates from a pier hub (T2: Pier 4, T1: Pier 1). */
+const ALL_BUS_GATES = TERMS.flatMap(k => GEO[k].busGates);
+
+/* Remote stands, boarded by bus: the South Gates (from gate 335), the West
+   Apron and the North Apron. They are drawn in a block at the west edge of
+   the twin (not to scale); bus times come from the real distances. */
+const REMOTE_SLOTS = [130, 210, 290, 370, 450].flatMap(y => [-215, -150, -85, -20].map(x => ({ x, y })));
+const REMOTE_STANDS = AG.remote.slice(0, REMOTE_SLOTS.length).map((r, i) => ({
+  id: r.id, area: r.area, areaName: r.areaName, busFrom: r.busFrom, busMin: r.busMin, busM: r.busM, realGate: r.gate,
+  plane: { ...REMOTE_SLOTS[i], ang: 0 }, real: { x: r.plane[0], y: r.plane[1], ang: r.ang },
+}));
 for (const k of TERMS) {
-  const G = GEO[k], p = G.pierById[k === 't1' ? 'P1' : 'P4'], h = p.hub;
-  // Every remote stand can be used by either terminal; the bus leaves from that terminal's pier hub.
-  const stands = k === 't2' ? REMOTE_STANDS : [...REMOTE_STANDS].reverse();
-  G.remoteGates = stands.map(st => ({
-    id: st.id, stand: st.id, pier: p.id, us: false, remote: true, term: k,
-    spine: { x: p.root.x, y: h.y + h.h / 2 }, lane: { x: p.root.x + 6, y: h.y + h.h / 2 },
-    hold: { x: h.x + 2, y: h.y + 2, w: h.w / 2 - 4, h: h.h - 4 },
-    bridgeA: { x: h.x, y: h.y + h.h / 2 }, door: { x: h.x - 6, y: h.y + h.h / 2 },
-    plane: st.plane, lbl: { x: st.plane.x, y: st.plane.y - 26, align: 'center' },
-  }));
+  const G = GEO[k];
+  // T1 buses leave from the named bus gate; T2's from the Pier 4 hub.
+  const p4 = G.pierById.P4;
+  const t2Bus = p4 && { pier: 'P4', spine: { ...p4.root }, hold: { x: p4.hub.x + 2, y: p4.hub.y + 4, w: 22, h: 14 }, bridgeA: { x: p4.hub.x, y: p4.hub.y + 11 }, route: [], laneBack: [] };
+  G.remoteGates = REMOTE_STANDS.map(st => {
+    const bg = k === 't1' ? G.busGates.find(b => b.id === st.busFrom) || G.busGates[0] : t2Bus;
+    return {
+      id: st.id, stand: st.id, area: st.area, remote: true, us: false, term: k, busMin: st.busMin, busGate: bg.id || 'P4',
+      pier: bg.pier, spine: bg.spine, route: bg.route, laneBack: bg.laneBack, hold: bg.hold, bridgeA: bg.bridgeA, door: bg.bridgeA,
+      plane: st.plane, lbl: { x: st.plane.x, y: st.plane.y - 26, align: 'center' },
+    };
+  });
+}
+/* Walking distance from security to a gate along the twin's route (metres). */
+function gateWalkM(gate) {
+  if (gate._walk != null) return gate._walk;
+  const p = GEO[gate.term].pierById[gate.pier];
+  let m = dist(p.sec, p.entry) * p.kEntry + dist(p.entry, p.root) * (p.k || 1) + polyLen([p.root, ...gate.route]);
+  return (gate._walk = m);
 }
 
 // Staff search sits between the terminals; a footway runs south to the staff car park.
@@ -265,23 +313,20 @@ for (const k of TERMS) GEO[k].bays = baysFor(GEO[k]);
 
 /* Arrival routes: aircraft door → bridge → pier arrivals lane → sterile corridor → arrivals level. */
 function arrivalPath(G, gate) {
-  const p = G.pierById[gate.pier], pts = [{ x: gate.bridgeA.x, y: gate.bridgeA.y }];
-  if (p.horizontal) {
-    pts.push({ x: gate.spine.x, y: p.root.y + 6 }, { x: G.corrX, y: p.root.y + 6 });
-  } else {
-    pts.push({ x: p.root.x + 6, y: gate.spine.y }, { x: p.root.x + 6, y: 482 }, { x: G.corrX, y: 482 });
-  }
-  pts.push({ x: G.corrX, y: 902 }, { x: G.arrEntry.x, y: G.arrEntry.y });
+  const p = G.pierById[gate.pier];
+  const pts = [{ x: gate.bridgeA.x, y: gate.bridgeA.y }, ...gate.laneBack, { x: p.root.x, y: p.root.y, k: p.k }];
+  pts.push({ x: p.entry.x, y: 482 }, { x: G.corrX, y: 482, k: p.kEntry }, { x: G.corrX, y: 902 }, { x: G.arrEntry.x, y: G.arrEntry.y });
   return pts;
 }
 
 /* Camera presets. */
 const PRESETS = {
   W: { name: 'Whole airport', rect: WORLD },
-  D: { name: 'Departures', rect: { x: 110, y: 90, w: 1520, h: 790 } },
+  D: { name: 'Departures', rect: { x: -240, y: -120, w: 1600, h: 1000 } },
   A: { name: 'Arrivals', rect: { x: 160, y: 430, w: 1060, h: 790 } },
   L: { name: 'Landside', rect: { x: -270, y: 640, w: 1960, h: 984 } },
   B: { name: 'Baggage', rect: { x: 160, y: 440, w: 1060, h: 990 } },
+  S: { name: 'Real map', site: true, rect: { x: -200, y: -620, w: 1150, h: 1120 } },
 };
 
 function ftSlot(G, r, out) {

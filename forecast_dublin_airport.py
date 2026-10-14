@@ -11,9 +11,9 @@ https://research.google/blog/timesfm-3-a-zero-shot-foundation-model-for-multivar
   targets          Terminal 1 and Terminal 2 daily passengers, jointly.
                    Only the history is passed in. Both are forecast together.
   past-only        Average departure delay. Known after the day, so the
-                   horizon is withheld. A fog day in the forecast window is
-                   the test of that: the truth dips, and the model cannot
-                   see the delay that caused it.
+                   horizon is withheld. Delays and cancellations follow
+                   Dublin Airport's real weather (weather_data.py), so a
+                   stormy day dips and history alone cannot see why.
   past-and-future  Published schedule (movements by terminal) and a 0/1
                    event flag. Both are known for the history and for the
                    next 28 days. Irregular event days in the horizon are not

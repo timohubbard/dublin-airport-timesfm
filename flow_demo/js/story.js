@@ -7,6 +7,12 @@
    being talked about. It auto-advances; arrow keys step, T or Esc stops.
    ==================================================================== */
 const dayIndex = iso => Math.max(0, DATA.days.findIndex(d => d.date === iso));
+/* The March day the real weather disrupted most (falls back to the 12th). */
+function mostDisruptedDay() {
+  let best = -1, bi = dayIndex('2026-03-12');
+  DATA.days.forEach((d, i) => { const w = d.weather; if (w && d.disruption) { const sev = w.disruption.cancelPct * 10 + w.disruption.delayExtra; if (sev > best) { best = sev; bi = i; } } });
+  return bi;
+}
 const sumNodes = (d, f) => TERMS.reduce((s, k) => s + f(d[k]), 0);
 const STORY = [
   { title: 'One day at Dublin Airport', secs: 18,
@@ -37,9 +43,13 @@ const STORY = [
   { title: 'What if an event is announced?', secs: 24, spot: 'scnInfo', tab: 'scn',
     text: () => { const d = DATA.days[state.di]; const f0 = sumNodes(d, n => n.joint_with_covariates), f1 = sumNodes(d, n => n.joint_with_covariates * (n.scen ? n.scen.event : 1)); return `Tell TimesFM about an event on an ordinary Tuesday and it re-forecasts: <b>+${fmtInt(f1 - f0)}</b> passengers, mostly Europe-city and UK. The rosters follow automatically. The history-only model cannot be told anything.`; },
     go: () => { setPlan('tfm'); loadDay(dayIndex('2026-03-10'), 7 * 3600); SCN.told = true; setScenario('event'); setLeftTab('scn'); } },
-  { title: 'Fog: what no forecast can see', secs: 22, spot: 'why', tab: 'fc',
-    text: () => `On 11 March fog cancels flights on the day. Delays are only known afterwards, so the forecast overshoots, and the backtest says to expect that on one day in twenty. The calibrated band and the surge rule are what absorb it.`,
-    go: () => { setScenario(null); loadDay(dayIndex('2026-03-11'), 8 * 3600); setLeftTab('fc'); goPreset('W'); } },
+  { title: 'Weather: what the forecast can and cannot see', secs: 26, spot: 'why', tab: 'fc',
+    text: () => {
+      const d = DATA.days[state.di], w = d.weather; if (!w) return '';
+      const L = w.riskByLead, r = w.riskDayAhead;
+      return `${fmtDate(d.date, { weekday: 'long', day: 'numeric', month: 'long' })}: ${d.disruption ? d.disruption.toLowerCase() : 'a rough day'} (gusts ${Math.round(w.obs.gust)} kt, ${w.obs.rain} mm of rain). A week out, ECMWF's physics model put the disruption risk at <b>${Math.round((L.ifs[0] || 0) * 100)}%</b> and its AI model at <b>${Math.round((L.aifs[0] || 0) * 100)}%</b>; the evening before, <b>${Math.round(r.ifs * 100)}%</b> and <b>${Math.round(r.aifs * 100)}%</b>, about four times the usual. Weather is a 1–7 day signal, so the plan is refreshed the day before; the twin replays the real hourly weather: wind, rain, de-icing, runway rate.`;
+    },
+    go: () => { if (SCN.kind) setScenario(null); const di = mostDisruptedDay(); loadDay(di, 8 * 3600); setLeftTab('fc'); goPreset('W'); } },
   { title: 'Kerbs, taxis and car parks', secs: 18, spot: 'taxiCards',
     text: () => `Ground transport is forecast the same way: taxi pickups by terminal, buses, and the Holiday Blue car park, whose cars carry over from one day to the next.`,
     go: () => { loadDay(dayIndex('2026-03-17'), 17 * 3600); goPreset('L'); setTab('land'); } },
@@ -133,6 +143,7 @@ function openBriefing() {
     <section class="bgrid">
       <div><h2>Forecast</h2><table><tr><th></th><th>Median</th><th>80% band</th><th>Flights</th></tr>${TERMS.map(k => `<tr><td class="l">${GEO[k].name}</td><td>${fmtInt(fc(k))}</td><td>${band(k)}</td><td>${d[k].movements}</td></tr>`).join('')}</table>
         <h2>Why</h2><p>${w ? `Against a baseline day (${fmtInt(w.base)}: the schedule of the same weekday in the four weeks before the forecast, no event), the published schedule ${w.schedule >= 0 ? 'adds' : 'removes'} ${fmtInt(Math.abs(w.schedule))}, the event calendar ${w.events >= 0 ? 'adds' : 'removes'} ${fmtInt(Math.abs(w.events))}, school holidays and travel direction ${w.calendar >= 0 ? 'add' : 'remove'} ${fmtInt(Math.abs(w.calendar))}.` : ''}</p>
+        ${d.weather ? `<h2>Weather <span class="bs">Met Éireann · ECMWF</span></h2><p>${briefWeather(d)}</p>` : ''}
         <h2>By market</h2><table><tr><th></th><th>Departing</th><th>Arriving</th><th>80% band (both)</th></tr>${mkRows}</table></div>
       <div><h2>Roster</h2><table class="hours"><tr><th>Hour</th>${hours.map(h => `<th>${pad(h % 24)}</th>`).join('')}</tr>
         ${TERMS.map(k => `<tr><td class="l">${GEO[k].short} lanes</td>${hours.map(h => `<td>${lanesAtH(k, h)}</td>`).join('')}</tr>`).join('')}
@@ -151,6 +162,15 @@ function openBriefing() {
   $('bClose').onclick = () => el.classList.remove('show');
   $('bPrint').onclick = () => window.print();
   $('bCsv').onclick = () => downloadRoster();
+}
+function briefWeather(d) {
+  const w = d.weather, r = w.riskDayAhead || {}, fa = w.hourly.dayAhead.ifs;
+  const maxw = Math.max(...fa.wind.filter(v => v != null)), rain = fa.rain.reduce((a, v) => a + (v || 0), 0);
+  const win = forecastHolding(d, 'ifs') || [];
+  return `Day-ahead ECMWF forecast: winds to ${Math.round(maxw)} kt, ${rain.toFixed(1)} mm of rain, low ${Math.round(Math.min(...fa.temp))}°C. ` +
+    `Disruption risk ${Math.round(Math.max(r.ifs || 0, r.aifs || 0) * 100)}% (IFS ${Math.round((r.ifs || 0) * 100)}%, AIFS ${Math.round((r.aifs || 0) * 100)}%). ` +
+    (win.length ? `Runway rate likely reduced ${pad(win[0].h)}–${pad(win[win.length - 1].h + 1)}h (${win[0].why}). ` : 'Normal runway operations expected. ') +
+    (Math.min(...fa.temp) <= 1 ? 'Frost: de-icing on early departures.' : '');
 }
 function downloadRoster() {
   const rows = [['slot_start', 'terminal', 'security_lanes', 'eu_booths', 'non_eu_booths', 'egates', 'taxis_called', 'forecast_plan']];

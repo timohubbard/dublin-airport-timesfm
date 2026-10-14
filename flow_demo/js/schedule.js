@@ -42,7 +42,12 @@ function genDay(di) {
   const gauss = () => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
   const pick = list => list[Math.floor(rnd() * list.length)];
   const pickWr = w => pickW(w, rnd());
-  const delayOf = () => day.delayMin > 0 ? Math.min(240, Math.round(-Math.log(1 - rnd() * 0.999) * day.delayMin)) * 60 : 0;
+  // Weather delays come from the runway and de-icing models (weather.js), so
+  // the random part of the delay leaves out the weather's share of the day's average.
+  const baseDelay = Math.max(4, day.delayMin - (day.weather ? day.weather.disruption.delayExtra : 0));
+  const delayOf = () => baseDelay > 0 ? Math.min(240, Math.round(-Math.log(1 - rnd() * 0.999) * baseDelay)) * 60 : 0;
+  const keepShare = 1 - (day.cancelledPct || 0) / 100;   // flights cancelled on the day (weather, strikes)
+  const mvTotal = (day.t1.movements || 1) + (day.t2.movements || 1);
   const hist = () => new Float32Array(NMIN);
   const out = {
     di, day, flights: [], arrFlights: [], depParties: [], arrParties: [], greeters: [], staff: [],
@@ -62,7 +67,7 @@ function genDay(di) {
     const deps = [];
     for (const m of TERMINAL_MARKETS[key]) {
       const md = mk[m], meta = MARKETS[m], wsum = meta.depW.reduce((x, y) => x + y, 0);
-      const nF = Math.max(1, Math.round(md.movements / 2));
+      const nF = Math.max(1, Math.round(md.movements / 2 * keepShare));
       for (let i = 0; i < nF; i++) {
         let r = rnd() * wsum, h = 0; while (r > meta.depW[h]) { r -= meta.depW[h]; h++; }
         const std = h * 3600 + Math.floor(rnd() * 12) * 300;
@@ -111,6 +116,8 @@ function genDay(di) {
     arrs.sort((a, b) => a.onBlock - b.onBlock);
     deps.forEach((f, i) => { f.no = (key === 't1' ? 1000 : 2000) + ((i * 37) % 900) + 11; });
     arrs.forEach((a, i) => { a.no = (key === 't1' ? 1000 : 2000) + ((i * 53 + 7) % 900) + 11; });
+    const wx = applyWeather(day, deps, arrs, rnd, (day[key].movements || 1) / mvTotal);
+    if (wx) { out.wxHeld = (out.wxHeld || 0) + wx.held; out.wxMaxHold = Math.max(out.wxMaxHold || 0, wx.maxHold); out.wxHourly = wx.hourly; out.deiced = (out.deiced || 0) + deps.filter(f => f.deiced).length; }
     assignGates(G, deps, arrs, rnd, out);
 
     /* ---- passengers per flight ---- */
@@ -157,7 +164,7 @@ function genDay(di) {
         const via = mode === 'met' ? (rnd() < 0.1 ? 'dropgo' : 'kerb') : mode === 'taxi' ? 'taxi' : mode === 'bus' ? 'bus' : mode === 'short_term' ? 'st' : mode === 'holiday_blue' ? 'hb' : 'rental';
         const bags = chk ? bagCount(pk, size, meta.long, rnd) : 0;
         const v = pm.speed * (0.9 + rnd() * 0.2);
-        const call = f.dep - clamp(pm.call[0] + pm.call[1] * gauss(), 20, 80) * 60;
+        const call = callTime(f, pm, v, gauss);
         const door = G.doors[Math.floor(rnd() * G.doors.length)];
         let est = spawn + (chk ? (DESK_SVC * (1 + 0.35 * (size - 1)) + 120 + dist(door, { x: (chk.x0 + chk.x1) / 2, y: 750 }) / v) : 0) + dist(door, G.snakeCenter) / v;
         const party = { kind: KIND.DEP, term: key, persona: pk, size, f, market: f.market, chk, ft, bags, spawn, est, call, mode, via, v, door,
@@ -186,7 +193,7 @@ function genDay(di) {
         let r = rnd() * wsum, pi = 0; while (r > w[pi] && pi < w.length - 1) { r -= w[pi]; pi++; }
         const pk = PERSONA_KEYS[pi], pm = PERSONAS[pk];
         let size = Math.min(partySize(pk, rnd), left); left -= size;
-        const leaveAt = a.onBlock + doors + (pk === 'prm' ? 10 * 60 : (order / rate) * 60);
+        const leaveAt = a.onBlock + doors + (pk === 'prm' ? 10 * 60 : (order / rate) * 60) + (a.gate && a.gate.remote ? a.gate.busMin * 60 : 0);
         order += size;
         const v = pm.speed * (0.9 + rnd() * 0.2);
         // Transfers: connect to an onward flight 60-240 min later, through Flight Connections Security.
@@ -196,7 +203,7 @@ function genDay(di) {
           if (cands.length) {
             const f = cands[Math.floor(rnd() * cands.length)];
             trfLeft -= size;
-            const call = f.dep - clamp(pm.call[0] + pm.call[1] * gauss(), 20, 80) * 60;
+            const call = callTime(f, pm, v, gauss);
             out.arrParties.push({ kind: KIND.TRF, term: key, persona: pk, size, af: a, f, market: a.market, leaveAt, v, call, ft: false, chk: null, bags: 0,
               svcMult: pm.svc * (0.85 + rnd() * 0.3), lounge: rnd() < pm.lounge[key === 't2' ? 0 : 1], members: null, seed: rnd() });
             f.pax += size; f.transfers += size; out.persona[pk] += size; out.kindCount[KIND.TRF] += size;
@@ -205,7 +212,7 @@ function genDay(di) {
         }
         let ch = rnd() < meta.nonEU ? 'non' : (pk !== 'family' && pk !== 'prm' && rnd() < meta.egate) ? 'egate' : 'eu';
         if (ch === 'egate' && day._scenario === 'egate') ch = 'eu';
-        const mode = pickWr(modeSplit(pk, md.rs));
+        const mode = pickWr(rainyAt(day, leaveAt) ? wetModeSplit(modeSplit(pk, md.rs)) : modeSplit(pk, md.rs));
         const met = mode === 'met';
         const bags = bagCount(pk, size, meta.long, rnd, true);
         const immAt = leaveAt + pathLen / v;
@@ -266,6 +273,14 @@ function genDay(di) {
   return out;
 }
 
+/* When a party heads for the gate. Screens show the walking time to each
+   gate, so travellers leave the lounge earlier for far gates: the persona's
+   usual margin before boarding closes plus most of the walk (or bus ride). */
+const WALK_AWARE = 0.85;
+function callTime(f, pm, v, gauss) {
+  const g = f.gate, walk = g ? (g.remote ? gateWalkM(g) / v + g.busMin * 60 : gateWalkM(g) / v) : 0;
+  return f.dep - clamp(pm.call[0] + pm.call[1] * gauss(), 20, 80) * 60 - WALK_AWARE * Math.max(0, walk - 180);
+}
 function partySize(pk, rnd) {
   const pm = PERSONAS[pk];
   if (pk === 'leisure') return rnd() < 0.35 ? 2 : 1;
@@ -276,7 +291,7 @@ function bagCount(pk, size, long, rnd, arriving) {
   const rate = Math.min(1.6, PERSONAS[pk].bags * (long ? 1.5 : 1)) * (arriving ? 1 : 1.25);
   return Math.floor(size * rate + rnd());
 }
-function polyLen(pts) { let s = 0; for (let i = 1; i < pts.length; i++) s += dist(pts[i - 1], pts[i]); return s; }
+function polyLen(pts) { let s = 0; for (let i = 1; i < pts.length; i++) s += dist(pts[i - 1], pts[i]) * (pts[i].k || 1); return s; }
 
 /* Gates are assigned per aircraft stay: from on-block (or the start of the
    day for night-stopped aircraft) to pushback. North American aircraft

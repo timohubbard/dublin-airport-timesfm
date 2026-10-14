@@ -46,23 +46,23 @@ function drawStatic(g) {
   g.fillStyle = '#060c18'; g.fillRect(WORLD.x - 600, WORLD.y - 600, WORLD.w + 1200, WORLD.h + 1200);
   g.strokeStyle = 'rgba(148,163,184,0.03)'; g.lineWidth = px;
   g.beginPath();
-  for (let x = -300; x <= 1700; x += 50) { g.moveTo(x, 0); g.lineTo(x, 1640); }
-  for (let y = 0; y <= 1640; y += 50) { g.moveTo(-300, y); g.lineTo(1700, y); }
+  for (let x = -300; x <= 1700; x += 50) { g.moveTo(x, -220); g.lineTo(x, 1640); }
+  for (let y = -200; y <= 1640; y += 50) { g.moveTo(-300, y); g.lineTo(1700, y); }
   g.stroke();
-  // Apron, runway, taxiway, remote stands.
+  // Apron, runway and taxiway (schematic), then the real piers, gates and stands.
   g.fillStyle = '#0b1424';
-  rr(g, -250, 92, 1866, 392, 18); g.fill();
-  rr(g, 1180, 440, 436, 210, 18); g.fill();
-  g.fillStyle = '#0f192b'; rr(g, -240, 26, 1830, 34, 3); g.fill();
+  rr(g, -250, -130, 1866, 606, 18); g.fill();
+  g.fillStyle = '#0f192b'; rr(g, -240, -192, 1830, 34, 3); g.fill();
   g.strokeStyle = 'rgba(203,213,225,0.22)'; g.lineWidth = 1.2; g.setLineDash([16, 14]);
-  g.beginPath(); g.moveTo(-200, 43); g.lineTo(1550, 43); g.stroke(); g.setLineDash([]);
+  g.beginPath(); g.moveTo(-200, -175); g.lineTo(1550, -175); g.stroke(); g.setLineDash([]);
   g.fillStyle = 'rgba(203,213,225,0.18)';
-  for (let i = 0; i < 6; i++) { g.fillRect(-232, 30 + i * 4.6, 18, 2.2); g.fillRect(1562, 30 + i * 4.6, 18, 2.2); }
-  g.strokeStyle = '#121d31'; g.lineWidth = 11; g.beginPath(); g.moveTo(-240, 80); g.lineTo(1600, 80); g.stroke();
-  g.strokeStyle = 'rgba(250,204,21,0.16)'; g.lineWidth = 0.8; g.beginPath(); g.moveTo(-240, 80); g.lineTo(1600, 80); g.stroke();
-  g.strokeStyle = 'rgba(250,204,21,0.12)'; g.lineWidth = 0.8;
+  for (let i = 0; i < 6; i++) { g.fillRect(-232, -188 + i * 4.6, 18, 2.2); g.fillRect(1562, -188 + i * 4.6, 18, 2.2); }
+  g.strokeStyle = '#121d31'; g.lineWidth = 11; g.beginPath(); g.moveTo(-240, -138); g.lineTo(1600, -138); g.stroke();
+  g.strokeStyle = 'rgba(250,204,21,0.16)'; g.lineWidth = 0.8; g.beginPath(); g.moveTo(-240, -138); g.lineTo(1600, -138); g.stroke();
+  // Stand lead-in lines.
+  g.strokeStyle = 'rgba(250,204,21,0.14)'; g.lineWidth = 0.8;
   g.beginPath();
-  for (const gt of ALL_GATES) { const c = Math.cos(gt.plane.ang), sn = Math.sin(gt.plane.ang); g.moveTo(gt.door.x, gt.door.y); g.lineTo(gt.plane.x - c * 34, gt.plane.y - sn * 34); }
+  for (const gt of ALL_GATES) { const c = Math.cos(gt.plane.ang), sn = Math.sin(gt.plane.ang); g.moveTo(gt.door.x, gt.door.y); g.lineTo(gt.plane.x - c * 30, gt.plane.y - sn * 30); }
   for (const r of REMOTE_STANDS) { g.moveTo(r.plane.x - 30, r.plane.y); g.lineTo(r.plane.x + 34, r.plane.y); }
   g.stroke();
   // Apron service road (tugs) and the baggage tunnels down to the basement.
@@ -71,22 +71,33 @@ function drawStatic(g) {
   g.beginPath(); g.moveTo(-250, 470); g.lineTo(1610, 470); g.stroke();
   for (const k of TERMS) { const G = GEO[k]; g.beginPath(); g.moveTo(G.tunnelX, 470); g.lineTo(G.tunnelX, Y.base + 6); g.stroke(); }
   g.setLineDash([]);
-  // Piers with gate holds and pier hubs.
+  // Piers: real centrelines at true width, rotundas, the corridor down to the terminal, hubs.
+  g.lineJoin = 'round'; g.lineCap = 'round';
   for (const k of TERMS) for (const p of GEO[k].piers) {
+    const strokePier = (w, col) => {
+      g.strokeStyle = col; g.lineWidth = w;
+      for (const br of p.branches) polyStroke(g, br.pts);
+      if (p.id !== 'P335') polyStroke(g, [p.root, p.entry]);
+    };
+    strokePier(PIER_HW * 2 + 2.2 * px, '#2a3a5a');
+    strokePier(PIER_HW * 2, '#121d33');
+    if (p.end) {
+      const e = p.branches[0].pts[p.branches[0].pts.length - 1];
+      g.fillStyle = '#121d33'; g.strokeStyle = '#2a3a5a'; g.lineWidth = 1.1 * px;
+      g.beginPath(); g.arc(e.x, e.y, p.end, 0, 7); g.fill(); g.stroke();
+    }
     g.fillStyle = '#121d33'; g.strokeStyle = '#2a3a5a'; g.lineWidth = 1.1 * px;
-    rr(g, p.rect.x, p.rect.y, p.rect.w, p.rect.h, 7); g.fill(); g.stroke();
     rr(g, p.hub.x, p.hub.y, p.hub.w, p.hub.h, 5); g.fill(); g.stroke();
-    g.fillStyle = 'rgba(244,114,182,0.07)';
-    for (const gt of p.gates) { rr(g, gt.hold.x, gt.hold.y, gt.hold.w, gt.hold.h, 3); g.fill(); }
-    g.strokeStyle = 'rgba(148,163,184,0.25)'; g.lineWidth = 2.2;
+    g.fillStyle = 'rgba(244,114,182,0.08)';
+    for (const gt of [...p.gates, ...p.busGates]) { rr(g, gt.hold.x, gt.hold.y, gt.hold.w, gt.hold.h, 3); g.fill(); }
+    g.strokeStyle = 'rgba(148,163,184,0.28)'; g.lineWidth = 2.2;
     g.beginPath(); for (const gt of p.gates) { g.moveTo(gt.bridgeA.x, gt.bridgeA.y); g.lineTo(gt.door.x, gt.door.y); } g.stroke();
     // Arrivals lane on the lower level of the pier.
     g.strokeStyle = 'rgba(251,146,60,0.22)'; g.lineWidth = 0.8; g.setLineDash([3, 3]);
-    g.beginPath();
-    if (p.horizontal) { g.moveTo(p.rect.x + p.rect.w, p.root.y + 6); g.lineTo(p.root.x, p.root.y + 6); }
-    else { g.moveTo(p.root.x + 6, p.rect.y); g.lineTo(p.root.x + 6, p.root.y); }
-    g.stroke(); g.setLineDash([]);
+    for (const br of p.branches) { const lane = []; for (let i = 0; i < br.pts.length; i++) lane.push(br.at(br.cum[i], -4, {})); polyStroke(g, lane); }
+    g.setLineDash([]);
   }
+  g.lineJoin = 'miter'; g.lineCap = 'butt';
   // Airside link, staff search, US preclearance annex.
   g.fillStyle = '#121d33'; g.strokeStyle = '#2a3a5a'; g.lineWidth = 1.1 * px;
   rr(g, AIRSIDE_LINK.x, AIRSIDE_LINK.y, AIRSIDE_LINK.w, AIRSIDE_LINK.h, 4); g.fill(); g.stroke();
@@ -432,19 +443,32 @@ function renderMap(now) {
   if (!mapCv.width || !mapCv.height) return;
   stepCamera(now || performance.now());
   const s = view.s;
-  const key = `${mapCv.width}x${mapCv.height}:${s.toFixed(4)}:${view.ox.toFixed(1)}:${view.oy.toFixed(1)}`;
+  const key = `${siteOn() ? 'site' : 'twin'}:${mapCv.width}x${mapCv.height}:${s.toFixed(4)}:${view.ox.toFixed(1)}:${view.oy.toFixed(1)}`;
   if (key !== bgKey) {
     bgKey = key;
     if (!bgCache) bgCache = document.createElement('canvas');
     bgCache.width = mapCv.width; bgCache.height = mapCv.height;
     const bg = bgCache.getContext('2d');
     bg.setTransform(dpr * s, 0, 0, dpr * s, dpr * view.ox, dpr * view.oy);
-    drawStatic(bg);
+    siteOn() ? drawSiteStatic(bg) : drawStatic(bg);
   }
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.drawImage(bgCache, 0, 0);
   g.setTransform(dpr * s, 0, 0, dpr * s, dpr * view.ox, dpr * view.oy);
   const t = sim.t;
+  if (siteOn()) {
+    drawSiteAircraft(g, t);
+    drawSitePeople(g, s);
+    const sel = state.selected;
+    if (sel && sel.stage !== DONE && Number.isFinite(sel._sx)) {
+      g.strokeStyle = '#fff'; g.lineWidth = 1.6 / s;
+      g.beginPath(); g.arc(sel._sx, sel._sy, (7 + Math.sin(performance.now() / 180) * 1.5) / s, 0, 7); g.stroke();
+    }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); labelBoxes = [];
+    drawSiteLabels(g);
+    drawWeatherFx(g, now || performance.now());
+    return;
+  }
   drawCarparkFill(g);
   drawAircraft(g, t);
   drawServers(g, t);
@@ -462,6 +486,7 @@ function renderMap(now) {
     g.beginPath(); g.arc(sel.x, sel.y, pulse / s, 0, 7); g.stroke();
   }
   drawLabels(g);
+  drawWeatherFx(g, now || performance.now());
 }
 
 /* ---------------- labels ---------------- */
@@ -533,10 +558,9 @@ function drawLabels(g) {
     label(g, 'PASSPORT CONTROL', G.arrBuilding.x + 8, 918, { size: 8.5, color: 'rgba(248,113,113,0.85)', ls: '1px' });
     label(g, `BAGGAGE RECLAIM · ${fmtInt(c.zone[Z.RECLAIM])}`, G.arrBuilding.x + 8, Y.reclaimTop + 4, { size: 8.5, color: 'rgba(250,204,21,0.85)', ls: '1px' });
     label(g, `ARRIVALS HALL · ${fmtInt(c.zone[Z.HALL])}`, G.arrBuilding.x + 8, 1084 + 3, { size: 8.5, color: 'rgba(251,146,60,0.85)', ls: '1px' });
-    for (const p of G.piers) {
-      const n = c.pier[p.id] || 0;
-      if (p.horizontal) label(g, `${p.name.toUpperCase()} · ${fmtInt(n)}`, p.tip.x, p.tip.y + 92, { size: 10, align: 'right', color: 'rgba(244,114,182,0.95)', ls: '1px' });
-      else label(g, `${p.name.toUpperCase()} · ${fmtInt(n)}`, p.tip.x, p.tip.y - 9, { size: 10, align: 'center', color: 'rgba(244,114,182,0.95)', ls: '1px' });
+      for (const p of G.piers) {
+      const n = c.pier[p.id] || 0, br = p.branches[0], tip = br.pts[br.pts.length - 1], up = tip.y <= p.root.y - 20;
+      label(g, `${p.name.toUpperCase()} · ${fmtInt(n)}`, tip.x + (up ? 0 : -14), up ? tip.y - (p.end || PIER_HW) - 9 : tip.y + 16, { size: 10, align: up ? 'center' : 'right', color: 'rgba(244,114,182,0.95)', ls: '1px' });
     }
     if (G.preclear) label(g, `US PRECLEARANCE · ${c.pre}`, G.preclear.x + G.preclear.w / 2 + 10, G.preclear.y - 8, { size: 8.5, align: 'center', color: 'rgba(52,211,153,0.85)', ls: '0.8px' });
     if (s > 0.75) {
@@ -548,7 +572,7 @@ function drawLabels(g) {
       label(g, 'FLIGHT CONNECTIONS', G.fcs.x + G.fcs.w / 2, G.fcs.y - 4, { size: 7.5, align: 'center', color: 'rgba(192,132,252,0.85)' });
     }
     if (s > 0.55) for (const ch of G.checkin) label(g, ch.label.toUpperCase(), ch.x0 - 4, 704, { size: 8.5, color: 'rgba(167,139,250,0.85)', ls: '0.8px' });
-    if (s > 1.15) for (const gt of G.gates) label(g, gt.id, gt.lbl.x, gt.lbl.y, { size: 9, align: gt.lbl.align, color: 'rgba(230,237,247,0.6)', weight: 500 });
+    if (s > 1.15) for (const gt of [...G.gates, ...G.busGates]) label(g, gt.id, gt.lbl.x, gt.lbl.y, { size: 9, align: gt.lbl.align, color: gt.bus ? 'rgba(74,222,128,0.6)' : 'rgba(230,237,247,0.6)', weight: 500 });
   }
   if (s > 0.9) for (const o of OUTLETS) {
     if (o.walk) continue;
@@ -560,14 +584,14 @@ function drawLabels(g) {
   label(g, 'UPPER ROAD · DEPARTURES', 700, Y.roadDep + 10, { size: 8.5, align: 'center', color: 'rgba(148,163,184,0.5)', ls: '1.5px' });
   label(g, 'LOWER ROAD · ARRIVALS', 700, Y.roadArr + 10, { size: 8.5, align: 'center', color: 'rgba(148,163,184,0.5)', ls: '1.5px' });
   label(g, 'RING ROAD', 700, 1470, { size: 8.5, align: 'center', color: 'rgba(148,163,184,0.45)', ls: '2px' });
-  label(g, 'REMOTE STANDS · BUS BOARDING', -118, 96, { size: 8.5, align: 'center', color: 'rgba(148,163,184,0.5)', ls: '1.5px' });
-  if (s > 1.1) for (const r of REMOTE_STANDS) label(g, r.id, r.plane.x, r.plane.y - 24, { size: 8, align: 'center', color: 'rgba(148,163,184,0.6)', weight: 500 });
-  label(g, 'RUNWAY', -150, 43, { size: 9, color: 'rgba(148,163,184,0.4)', ls: '2px' });
+  label(g, 'REMOTE STANDS · BY BUS · NOT TO SCALE', -118, 96, { size: 8.5, align: 'center', color: 'rgba(148,163,184,0.5)', ls: '1.2px' });
+  if (s > 1.1) for (const r of REMOTE_STANDS) label(g, `${r.realGate ? r.realGate + ' · ' : ''}${r.id} · ${Math.round(r.busMin)}′ bus`, r.plane.x, r.plane.y - 24, { size: 8, align: 'center', color: 'rgba(148,163,184,0.6)', weight: 500 });
+  label(g, 'RUNWAYS 10R/28L · 16/34 (SCHEMATIC)', -150, -175, { size: 9, color: 'rgba(148,163,184,0.4)', ls: '2px' });
   const sp = toScreen(WORLD.x + 14, WORLD.y + WORLD.h - 14), len = 100 * s;
   g.strokeStyle = 'rgba(148,163,184,0.5)'; g.lineWidth = 1;
   g.beginPath(); g.moveTo(sp.x, sp.y); g.lineTo(sp.x + len, sp.y); g.moveTo(sp.x, sp.y - 3); g.lineTo(sp.x, sp.y + 3); g.moveTo(sp.x + len, sp.y - 3); g.lineTo(sp.x + len, sp.y + 3); g.stroke();
   g.font = '500 9.5px Inter, sans-serif'; g.fillStyle = 'rgba(148,163,184,0.6)'; g.textAlign = 'left'; g.textBaseline = 'bottom';
-  g.fillText('≈100 m · N ↑ · schematic', sp.x, sp.y - 4);
+  g.fillText('100 m · airside to scale, turned: real west ↑ · terminals schematic', sp.x, sp.y - 4);
 }
 
 let countsCache = null, countsAt = -1;
