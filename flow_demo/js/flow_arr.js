@@ -9,7 +9,8 @@ function startArrival(rp, t) {
   const g = rp.g;
   if (g.kind === KIND.TRF) { startTransfer(rp, t); return; }
   const G = GEO[g.term], gate = g.af.gate;
-  const pts = arrivalPath(G, gate).map(p => ({ x: p.x + jit(1.5), y: p.y + jit(1.5) }));
+  const wf = walkFactor(gate.pier, t);
+  const pts = arrivalPath(G, gate).map(p => ({ x: p.x + jit(1.5), y: p.y + jit(1.5), k: (p.k || 1) * wf }));
   g.af.deplaned += g.size;
   sim.rpOf.set(g, rp);
   spawnMembers(rp, KIND.ARR, gate.door.x, gate.door.y, ST.A_DEPLANE, (a, k) => {

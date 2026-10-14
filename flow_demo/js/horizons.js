@@ -32,6 +32,8 @@ const HZ_SERIES = {
   imm: { name: 'Arriving passengers reaching passport control', short: 'Passport control', unit: 'passengers / hour' },
 };
 const Z10 = 1.2816;
+const HZ_TYPICAL_DELAY = 15 * 60;
+const HZ_MIN_SHARE = 0.10;                          // nowcast once a tenth of the expected day has arrived                     // arrival delay a planner expects on an ordinary day (illustrative)
 function normCdf(z) { const t = 1 / (1 + 0.2316419 * Math.abs(z)), d = 0.3989423 * Math.exp(-z * z / 2); const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return z > 0 ? 1 - p : p; }
 /* Spread a normal(mu, sd) time (s) over clock hours, adding w. */
 function addNormalHours(p, mu, sd, w) {
@@ -42,17 +44,17 @@ function addNormalHours(p, mu, sd, w) {
 
 /* Expected shape of the day from the timetable, and the daily total's quantiles. */
 function hzPrior(g, k, series) {
-  const p = new Float64Array(NH), q = LEVELS.map(() => 0);
+  const p = new Float64Array(NH), q = LEVELS.map(() => 0), fl = series === 'imm' ? [] : null;
   let T = 0;
   for (const m of TERMINAL_MARKETS[k]) {
     const md = g.mk[k][m], node = series === 'sec' ? md.dep : md.arr, keep = 1 - md.ts;
     const qq = nodeQ(node) || LEVELS.map(() => planValue(node, 'tfm'));
     qq.forEach((v, i) => { q[i] += v * keep; });
     const F = planValue(node, 'tfm') * keep; T += F;
-    const fl = series === 'sec' ? g.flights.filter(f => f.term === k && f.market === m) : g.arrFlights.filter(a => a.term === k && a.market === m);
-    const seats = fl.reduce((s, f) => s + f.seats, 0) || 1;
+    const flights = series === 'sec' ? g.flights.filter(f => f.term === k && f.market === m) : g.arrFlights.filter(a => a.term === k && a.market === m);
+    const seats = flights.reduce((s, f) => s + f.seats, 0) || 1;
     const mix = md.mix || DEFAULT_MIX, meta = MARKETS[m];
-    for (const f of fl) {
+    for (const f of flights) {
       const w = f.seats / seats * F;
       if (series === 'sec') {
         // Show-up before the scheduled departure, by traveller type (persona lead times), less check-in.
@@ -65,15 +67,27 @@ function hzPrior(g, k, series) {
           addNormalHours(p, f.std - lead * 60, pm.lead[1] * 60 * 1.05, w * share);
         }
       } else {
-        // Scheduled arrival + taxi-in, doors, deplaning and the walk, plus a typical delay.
-        const walk = f.gate ? polyLen(arrivalPath(GEO[k], f.gate)) / 1.2 : 420;
-        addNormalHours(p, f.sta + 9 * 60 + (f.wide ? 8 : 4) * 60 + walk, 9 * 60, w);
+        // Scheduled arrival + a typical delay, taxi-in, doors, deplaning and the walk.
+        const walk = f.gate ? polyLen(arrivalPath(GEO[k], f.gate)) / 1.2 + (f.gate.remote ? f.gate.busMin * 60 : 0) : 420;
+        const off = 9 * 60 + (f.wide ? 8 : 4) * 60 + walk;
+        addNormalHours(p, f.sta + HZ_TYPICAL_DELAY + off, 15 * 60, w);
+        fl.push({ w, on: f.onBlock, off });
       }
     }
   }
   const s = p.reduce((a, b) => a + b, 0) || 1;
   for (let h = 0; h < NH; h++) p[h] /= s;
-  return { p, T, q };
+  if (fl) for (const f of fl) f.w /= s;
+  return { p, T, q, fl };
+}
+/* Share of the day expected to have arrived by t. For passport control the
+   airport knows which flights have landed and when (on-block times), so the
+   expectation follows actual landings, not the timetable. */
+function hzCum(pr, t) {
+  if (!pr.fl) return cumAt(pr.p, t);
+  let c = 0;
+  for (const f of pr.fl) if (f.on <= t) c += f.w * normCdf((t - f.on - f.off) / (6 * 60));
+  return c;
 }
 /* What actually reached the queue, by clock hour (from the day's generated passengers). */
 function hzRealized(g, k, series) {
@@ -100,7 +114,7 @@ function hzCalibrate(done) {
       const r = { di };
       for (const s of ['sec', 'imm']) for (const k of TERMS) {
         const pr = hzPrior(g, k, s), real = hzRealized(g, k, s);
-        r[s + k] = { p: pr.p, T: pr.T, q: pr.q, r: real, R: real.reduce((a, b) => a + b, 0) };
+        r[s + k] = { p: pr.p, fl: pr.fl, T: pr.T, q: pr.q, r: real, R: real.reduce((a, b) => a + b, 0) };
       }
       rec.push(r);
       if (!had && di !== state.di) genCache.delete(genKey(di));
@@ -123,10 +137,10 @@ function hzErrors(series, skip) {
     if (r.di === skip) continue;
     for (const k of TERMS) {
       const o = r[series + k]; if (!o.R) continue;
-      let cr = 0, cp = 0;
+      let cr = 0;
       for (let h = 0; h < NH; h++) {
         if (o.p[h] > 0.004) { const e = Math.log(Math.max(1e-4, o.r[h] / o.R) / o.p[h]); sh[h] += e * e; shn[h]++; }
-        cr += o.r[h] / o.R; cp += o.p[h];
+        cr += o.r[h] / o.R; const cp = hzCum(o, (h + 1) * 3600);
         if (cp > 0.02 && cp < 0.995) { const e = Math.log(Math.max(1e-4, cr) / cp); cu[h] += e * e; cun[h]++; }
       }
     }
@@ -146,8 +160,8 @@ function hzForecast(g, k, series, t, obs) {
   let mPost = mT, sPost = sT, O = 0, F = 0;
   if (obs && t != null) {
     for (let h = 0; h < NH; h++) O += h < Math.floor(t / 3600) ? obs[h] : h === Math.floor(t / 3600) ? obs[h] : 0;
-    F = cumAt(pr.p, t);
-    if (F > 0.03 && O > 0 && E) {
+    F = hzCum(pr, t);
+    if (F > HZ_MIN_SHARE && O > 0 && E) {
       const hc = Math.min(NH - 1, Math.max(0, Math.floor(t / 3600) - 1)), sF = Math.max(0.02, E.cum[hc]);
       const x = Math.log(O / F);                         // the day's total implied by what has arrived
       const wObs = sT * sT / (sT * sT + sF * sF);
@@ -188,11 +202,11 @@ function hzBacktest(series) {
         inside += o.r[h] >= lo && o.r[h] <= hi; n++;
       }
       HZ.cuts.forEach((c, i) => {
-        const t = c * 3600, F = cumAt(o.p, t);
+        const t = c * 3600, F = hzCum(o, t);
         let O = 0; for (let h = 0; h < c; h++) O += o.r[h];
         const rest = o.R - O;
         const sF = Math.max(0.02, E.cum[c - 1]), w = sT * sT / (sT * sT + sF * sF);
-        const mPost = F > 0.03 && O > 0 ? mT + w * (Math.log(O / F) - mT) : mT;
+        const mPost = F > HZ_MIN_SHARE && O > 0 ? mT + w * (Math.log(O / F) - mT) : mT;
         cut[i].ePrior += Math.abs(Math.exp(mT) * (1 - F) - rest); cut[i].eNow += Math.abs(Math.exp(mPost) * (1 - F) - rest); cut[i].a += rest;
       });
     }
@@ -249,12 +263,12 @@ function drawToday() {
   const k = hzTerms().length > 1 ? 'both terminals' : GEO[hzTerms()[0]].name;
   const pct = F.F * 100;
   $('stTodayRead').innerHTML = `<b>${fmtDate(gen.day.date, { weekday: 'short', day: 'numeric', month: 'short' })}, ${k}</b>
-    <span>made the evening before <b class="u">${fmtK(F.prior)}</b> (80%: ${fmtK(F.priorBand[0])}–${fmtK(F.priorBand[1])})</span>
-    ${pct > 3 ? `<span>nowcast at ${fmtHM(sim.t)} <b class="c">${fmtK(F.now)}</b> (80%: ${fmtK(F.nowBand[0])}–${fmtK(F.nowBand[1])})</span><span>${fmtK(F.O)} arrived so far, ${pct.toFixed(0)}% of the expected day</span>` : '<span>the nowcast starts once the first wave arrives</span>'}`;
+    <span>${SRC.dayahead ? 'forecast the evening before' : `planned ${fmtDate(META.origin, { day: 'numeric', month: 'short' })}`} <b class="u">${fmtK(F.prior)}</b> (80%: ${fmtK(F.priorBand[0])}–${fmtK(F.priorBand[1])})</span>
+    ${pct > HZ_MIN_SHARE * 100 ? `<span>nowcast at ${fmtHM(sim.t)} <b class="c">${fmtK(F.now)}</b> (80%: ${fmtK(F.nowBand[0])}–${fmtK(F.nowBand[1])})</span><span>${fmtK(F.O)} arrived so far, ${pct.toFixed(0)}% of the expected day</span>` : `<span>the nowcast starts once ${HZ_MIN_SHARE * 100}% of the expected day has arrived</span>`}`;
 }
 function hzNotes() {
   const bt = hzBacktest(hzState.series); if (!bt || !$('stTodayNote')) return;
-  $('stTodayNote').innerHTML = `Bars: arrived so far (pink: outside the band made the evening before). Grey: hourly 80% band from the timetable and the TimesFM daily forecast; teal: the nowcast for the hours still to come. <b>Backtest over March</b>, each day calibrated on the other 27: hourly 80% bands held ${Math.round(bt.cover80 * 100)}% of ${fmtInt(bt.n)} terminal-hours. Error on the rest of the day, before → after the nowcast: ${bt.cuts.map(c => `${pad(c.c)}:00 ${(c.prior * 100).toFixed(1)}% → <b>${(c.now * 100).toFixed(1)}%</b>`).join(' · ')}.`;
+  $('stTodayNote').innerHTML = `Bars: arrived so far (pink: outside the band). Grey: hourly 80% band from the timetable and the TimesFM daily forecast (the roster's source: the 1 March plan or the evening-before refresh); teal: the nowcast for the hours still to come. <b>Backtest over March</b>, each day calibrated on the other 27: hourly 80% bands held ${Math.round(bt.cover80 * 100)}% of ${fmtInt(bt.n)} terminal-hours. Error on the rest of the day, before → after the nowcast: ${bt.cuts.map(c => `${pad(c.c)}:00 ${(c.prior * 100).toFixed(1)}% → <b>${(c.now * 100).toFixed(1)}%</b>`).join(' · ')}.`;
 }
 function drawWeek(S) {
   const cv = $('stWeek'); if (!cv) return;

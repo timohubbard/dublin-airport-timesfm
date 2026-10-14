@@ -253,7 +253,7 @@ function setLeftTab(k) {
   if (k === 'plan' && gen) renderDecision();
 }
 function renderScenario() {
-  $('scn').innerHTML = [['', 'As forecast'], ...Object.entries(SCENARIO_DEFS).map(([k, v]) => [k, v.name])].map(([k, n]) =>
+  $('scn').innerHTML = [['', 'As forecast'], ...Object.entries(SCENARIO_DEFS).filter(([k]) => k !== 'custom').map(([k, v]) => [k, v.name])].map(([k, n]) =>
     `<button class="${(SCN.kind || '') === k ? 'on' : ''}" data-k="${k}">${n}${k && SCENARIO_DEFS[k].demand ? '<small>demand</small>' : k ? '<small>capacity</small>' : ''}</button>`).join('');
   $('scn').querySelectorAll('button').forEach(b => b.onclick = () => setScenario(b.dataset.k || null));
   $('told').checked = SCN.told;
@@ -262,11 +262,12 @@ function renderScenario() {
   $('toldWrap').style.display = def && def.demand ? '' : 'none';
   if (!def) { $('scnInfo').innerHTML = `<div class="sub2">Pick a what-if to change the selected day. Demand scenarios were re-forecast by TimesFM with the changed schedule or event calendar; capacity scenarios change what the airport can process.</div>`; return; }
   const d = gen.day, base = DATA.days[state.di];
-  let html = `<div class="scninfo"><b>${def.name}</b><p>${def.desc}</p>`;
+  const custom = SCN.kind === 'custom' && SCN.custom;
+  let html = `<div class="scninfo"><b>${custom ? 'Your scenario' : def.name}</b><p>${custom ? esc(SCN.custom.title) : def.desc}</p>`;
   if (def.demand) {
     const before = base.t1.actual + base.t2.actual, after = d.t1.actual + d.t2.actual;
     const fc0 = base.t1.joint_with_covariates + base.t2.joint_with_covariates;
-    const fc1 = TERMS.reduce((s, k) => s + base[k].joint_with_covariates * (base[k].scen ? base[k].scen[SCN.kind] : 1), 0);
+    const fc1 = TERMS.reduce((s, k) => s + base[k].joint_with_covariates * scnFactor(base[k]), 0);
     html += `<div class="stat"><span>Demand in the simulation</span><b>${fmtInt(after)} <small>(${after >= before ? '+' : ''}${fmtInt(after - before)})</small></b></div>
       <div class="stat"><span>TimesFM, told</span><b>${fmtInt(fc1)} <small>(${fc1 >= fc0 ? '+' : ''}${fmtInt(fc1 - fc0)})</small></b></div>
       <div class="stat"><span>History only</span><b>${fmtInt(base.t1.univariate + base.t2.univariate)} <small>(cannot be told)</small></b></div>`;
@@ -278,7 +279,7 @@ function renderScenario() {
     <div class="stat"><span>Peak taxi-rank wait</span><b>${TERMS.map(k => Math.round(outlook[state.plan].taxi[k].peak) + 'm').join(' · ')}</b></div></div>`;
   $('scnInfo').innerHTML = html;
 }
-function setScenario(k) { SCN.kind = k; applyScenario(); }
+function setScenario(k) { SCN.kind = k; if (k !== 'custom') SCN.custom = null; applyScenario(); renderShockList(); }
 function applyScenario() {
   genCache.clear();
   loadDay(state.di);
@@ -644,6 +645,7 @@ function computeRisk(i, tok = riskToken) {
 function writeHash() {
   if (state.noHash) return;
   const h = new URLSearchParams({ d: DATA.days[state.di].date, p: state.plan, s: SCN.kind || '', t: fmtHM(sim ? sim.t : 6 * 3600) });
+  if (SCN.kind === 'custom' && SCN.custom) h.set('q', SCN.custom.text);
   history.replaceState(null, '', '#' + h.toString());
 }
 function readHash() {
@@ -652,6 +654,7 @@ function readHash() {
   if (di >= 0) out.di = di;
   const p = h.get('p'); if (p && (p === 'hist' || p === 'tfm' || p === 'p90' || /^q\d+$/.test(p))) out.plan = p;
   const s = h.get('s'); if (s && SCENARIO_DEFS[s]) out.scn = s;
+  if (h.get('q')) out.q = h.get('q').slice(0, 400);
   const t = h.get('t'); if (t && /^\d\d:\d\d$/.test(t)) out.t = +t.slice(0, 2) * 3600 + +t.slice(3) * 60;
   return out;
 }

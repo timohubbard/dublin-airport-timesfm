@@ -60,6 +60,7 @@ document.addEventListener('keydown', e => {
   if (k === 'f' || k === 'F') { toggleStudio(); return; }
   if (k === 't' || k === 'T') { story.running ? storyStop() : storyStart(); return; }
   if (k === 'r' || k === 'R') { openBriefing(); return; }
+  if (k === 'i' || k === 'I') { toggleImpact(); return; }
   if (k === '[' || k === ']') {
     const li = state.plan === 'hist' ? 5 : planLevelIndex(state.plan), i = RISK_LEVELS.indexOf(li);
     const j = clamp((i < 0 ? 0 : i) + (k === ']' ? 1 : -1), 0, RISK_LEVELS.length - 1);
@@ -82,6 +83,8 @@ const perf = { frames: [], step: 0, render: 0 };
 let last = performance.now(), panelAt = 0;
 function frame(now) {
   const realDt = Math.min(0.1, (now - last) / 1000); last = now;
+  // The impact analysis is running the day headless: leave the simulation to it.
+  if (state.analyzing) { requestAnimationFrame(frame); return; }
   const s0 = performance.now();
   if (state.seekTarget != null) {
     while (sim.t < state.seekTarget - 1e-6 && performance.now() - s0 < 45) step(Math.min(10, state.seekTarget - sim.t));
@@ -118,8 +121,10 @@ function init() {
   const h = readHash();
   state.di = h.di ?? Math.max(0, DATA.days.findIndex(d => d.event));
   if (h.plan) state.plan = h.plan;
-  if (h.scn) SCN.kind = h.scn;
-  buildCalendar(); buildSegs(); buildCards(); buildRightTabs(); buildLeftTabs(); renderPlans(); renderAdj(); renderSegs(); renderLegend();
+  if (h.scn === 'custom' && h.q) { SCN.kind = 'custom'; SCN.custom = { text: h.q, ...parseScenarioText(h.q) }; }
+  else if (h.scn && SCENARIO_DEFS[h.scn]) SCN.kind = h.scn;
+  buildCalendar(); buildSegs(); buildCards(); buildRightTabs(); buildLeftTabs(); renderPlans(); renderAdj(); renderSegs(); renderLegend(); renderScenarioBox();
+  if (SCN.custom) $('scnText').value = SCN.custom.text;
   resizeMap();
   gen = genDay(state.di); rebuildPlans(); resetSim(); renderDayPanel(); renderOutlook(); renderScenario();
   seek(h.t ?? 6 * 3600);

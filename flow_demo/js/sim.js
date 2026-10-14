@@ -74,7 +74,9 @@ function termState(key) {
 }
 function resetSim() {
   agentSeq = 0;
-  seedSim(gen.day.date + '|' + state.plan + '|' + JSON.stringify(state.offset) + '|' + (SCN.kind || ''));
+  // The scenario is left out of the seed: a day with and without a scenario
+  // draws the same random numbers until the scenario changes something.
+  seedSim(gen.day.date + '|' + state.plan + '|' + JSON.stringify(state.offset));
   sim = {
     t: DAY_START, alive: [], events: new Heap(), ptr: { dep: 0, arr: 0, grt: 0, stf: 0, fl: 0 },
     ts: { t1: termState('t1'), t2: termState('t2') },
@@ -175,10 +177,10 @@ function takeInto(ts, a, L, t0, t, fromFt) {
 }
 function serveSecurity(ts, t0, t) {
   const k = ts.G.id;
-  ts.planned = t >= OPEN[k] ? lanesAt(k, t) : 0;
+  ts.planned = t >= OPEN[k] ? Math.round(lanesAt(k, t) * (1 - staffShort(k, t))) : 0;
   const w = ts.planned ? ts.secQ.length / (ts.planned * LANE_RATE / 60) : 0;
   ts.surge = ts.planned > 0 && (ts.surge ? w > SURGE_OFF : w > SURGE_ON);
-  ts.openN = Math.min(maxLanesOf(k), ts.planned + (ts.surge ? SURGE : 0));
+  ts.openN = Math.min(maxLanesOf(k, t), ts.planned + (ts.surge ? SURGE : 0));
   const n = ts.openN, order = ts.G.laneOrder;
   for (const L of ts.lanes) L.open = false;
   if (n > 0) {
@@ -197,12 +199,14 @@ function serveSecurity(ts, t0, t) {
       }
     }
   }
+  const cf = chkFactor(k, t);
   for (const c of ts.chk) {
+    if (!Number.isFinite(cf)) break;          // power cut: desks stop
     for (const d of c.desks) {
       while (c.q.length && d.busy <= t) {
         const a = c.q.shift();
         const start = Math.max(d.busy, t0, a.qJoin);
-        a.stage = ST.D_CHK_SVC; a.desk = d; a.svcEnd = start + DESK_SVC * (1 + 0.35 * (a.party.size - 1)) * (0.6 + 0.8 * R());
+        a.stage = ST.D_CHK_SVC; a.desk = d; a.svcEnd = start + DESK_SVC * cf * (1 + 0.35 * (a.party.size - 1)) * (0.6 + 0.8 * R());
         d.busy = a.svcEnd;
       }
     }
@@ -218,9 +222,10 @@ function immOpen(ts, t) {
   const w = Math.max(wEU, wNon);
   ts.immSurge = (p.eu[s] + p.non[s]) > 0 && (ts.immSurge ? w > IMM.surgeOff : w > IMM.surgeOn);
   const extra = ts.immSurge ? IMM.surge : 0;
-  ts.imm.eu.open = Math.min(IMM.booths[k].eu, p.eu[s] + (wEU >= wNon ? extra : 0));
-  ts.imm.non.open = Math.min(IMM.booths[k].non, p.non[s] + (wNon > wEU ? extra : 0));
-  ts.imm.egate.open = p.egate[s];
+  const staffed = 1 - immShort(k, t);
+  ts.imm.eu.open = Math.round(Math.min(IMM.booths[k].eu, p.eu[s] + (wEU >= wNon ? extra : 0)) * staffed);
+  ts.imm.non.open = Math.round(Math.min(IMM.booths[k].non, p.non[s] + (wNon > wEU ? extra : 0)) * staffed);
+  ts.imm.egate.open = egatesDown(k, t) ? 0 : p.egate[s];
 }
 function immWaitNow(ts) {
   const p = plans.imm[ts.G.id];

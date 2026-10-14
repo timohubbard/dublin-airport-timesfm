@@ -10,3 +10,6 @@ timesfm[mlx] @ git+https://github.com/google-research/timesfm.git@e51928e27119cb
 
 # Tests
 pytest>=8.0
+
+# Optional: Claude as the twin's scenario interpreter (scenario_server.py)
+anthropic>=1.13

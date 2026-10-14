@@ -108,10 +108,11 @@ function baggageUpdate(t0, t, dt) {
   for (const k of TERMS) {
     const bk = sim.bags[k], G = GEO[k];
     // Hold-baggage screening.
+    const hf = hbsFactor(k, t);
     for (const m of bk.hbs) {
-      while (bk.hbsQ.length && m.busy <= t) {
+      while (hf > 0 && bk.hbsQ.length && m.busy <= t) {
         const b = bk.hbsQ.shift();
-        m.busy = Math.max(m.busy, t0) + 3600 / BAGS.hbsRate;
+        m.busy = Math.max(m.busy, t0) + 3600 / (BAGS.hbsRate * hf);
         B.stats.screened++;
         const r = R();
         let release = m.busy;

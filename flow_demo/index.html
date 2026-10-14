@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=a4">
+<link rel="stylesheet" href="css/app.css?v=c2">
 </head>
 <body>
 <header class="top">
@@ -76,19 +76,27 @@
     </div>
 
     <div id="lp-scn" class="tabpane">
-      <h3>What if… <small>applies to the selected day</small></h3>
+      <h3>Describe what happened <small>the twin works out the knock-on effects</small></h3>
+      <div class="scnbox">
+        <textarea id="scnText" rows="3" placeholder="e.g. Three security lanes fail in T1 at 7am for two hours, and a crash on the M1 delays traffic by 40 minutes" aria-label="Describe a scenario"></textarea>
+        <div class="scnrow"><button class="pill btn primary" id="scnGo">Simulate</button><span class="sub2" id="scnSrc"></span></div>
+        <div class="scnex" id="scnEx"></div>
+        <div id="scnShocks"></div>
+      </div>
+      <h3>Or pick a what-if <small>applies to the selected day</small></h3>
       <div class="scn" id="scn"></div>
       <label class="told" id="toldWrap"><input type="checkbox" id="told" checked> <span>Tell the forecast <small>TimesFM is re-run with the changed schedule / event calendar</small></span></label>
       <div id="scnInfo"></div>
     </div>
 
     <div class="foot">
-      Daily volumes are synthetic, with monthly totals and market mix calibrated to <a href="https://www.cso.ie/en/statistics/transport/aviationstatistics/" target="_blank" rel="noopener">CSO aviation statistics</a> for Dublin Airport; terminals, markets and every operational figure are invented, not daa data. Outlet, lounge, carousel and car-park names come from daa's public terminal map; their capacities, every cost and every spend figure are illustrative. The layout is a schematic stack (departures, arrivals, baggage hall, roads), not to scale.
+      Daily volumes are synthetic, with monthly totals and market mix calibrated to <a href="https://www.cso.ie/en/statistics/transport/aviationstatistics/" target="_blank" rel="noopener">CSO aviation statistics</a> for Dublin Airport; terminals, markets and every operational figure are invented, not daa data. Outlet, lounge, carousel and car-park names come from daa's public terminal map; their capacities, every cost and every spend figure are illustrative. Terminals are a schematic stack (departures, arrivals, baggage hall, roads); piers, gates, stands and walking distances are real, from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> (ODbL). Key S shows the real map.
     </div>
   </aside>
 
   <section class="stage">
     <div class="studio" id="studio" role="dialog" aria-label="Forecast Studio"></div>
+    <div class="studio impact" id="impact" role="dialog" aria-label="Scenario impact"><div id="impBody"></div></div>
     <div class="mapwrap" id="mapwrap">
       <canvas id="map"></canvas>
       <div class="ov tl">
@@ -163,32 +171,34 @@
 <div class="storybar glass" id="storybar"></div>
 <div class="brief" id="brief"></div>
 
-<script src="flow_data.js?v=a4"></script>
-<script src="js/airport_geo.js?v=a4"></script>
-<script src="js/core.js?v=a4"></script>
-<script src="js/params.js?v=a4"></script>
-<script src="js/geometry.js?v=a4"></script>
-<script src="js/facilities.js?v=a4"></script>
-<script src="js/forecast.js?v=a4"></script>
-<script src="js/weather.js?v=a4"></script>
-<script src="js/schedule.js?v=a4"></script>
-<script src="js/roster.js?v=a4"></script>
-<script src="js/decision.js?v=a4"></script>
-<script src="js/sim.js?v=a4"></script>
-<script src="js/flow_dep.js?v=a4"></script>
-<script src="js/flow_arr.js?v=a4"></script>
-<script src="js/flow_other.js?v=a4"></script>
-<script src="js/commerce.js?v=a4"></script>
-<script src="js/baggage.js?v=a4"></script>
-<script src="js/landside.js?v=a4"></script>
-<script src="js/render_map.js?v=a4"></script>
-<script src="js/site_view.js?v=a4"></script>
-<script src="js/render_charts.js?v=a4"></script>
-<script src="js/studio.js?v=a4"></script>
-<script src="js/horizons.js?v=a4"></script>
-<script src="js/ui.js?v=a4"></script>
-<script src="js/story.js?v=a4"></script>
-<script src="js/main.js?v=a4"></script>
-<script src="js/verify.js?v=a4"></script>
+<script src="flow_data.js?v=c2"></script>
+<script src="js/airport_geo.js?v=c2"></script>
+<script src="js/core.js?v=c2"></script>
+<script src="js/params.js?v=c2"></script>
+<script src="js/geometry.js?v=c2"></script>
+<script src="js/facilities.js?v=c2"></script>
+<script src="js/forecast.js?v=c2"></script>
+<script src="js/weather.js?v=c2"></script>
+<script src="js/scenario.js?v=c2"></script>
+<script src="js/schedule.js?v=c2"></script>
+<script src="js/roster.js?v=c2"></script>
+<script src="js/decision.js?v=c2"></script>
+<script src="js/sim.js?v=c2"></script>
+<script src="js/flow_dep.js?v=c2"></script>
+<script src="js/flow_arr.js?v=c2"></script>
+<script src="js/flow_other.js?v=c2"></script>
+<script src="js/commerce.js?v=c2"></script>
+<script src="js/baggage.js?v=c2"></script>
+<script src="js/landside.js?v=c2"></script>
+<script src="js/render_map.js?v=c2"></script>
+<script src="js/site_view.js?v=c2"></script>
+<script src="js/render_charts.js?v=c2"></script>
+<script src="js/studio.js?v=c2"></script>
+<script src="js/horizons.js?v=c2"></script>
+<script src="js/scenario_ui.js?v=c2"></script>
+<script src="js/ui.js?v=c2"></script>
+<script src="js/story.js?v=c2"></script>
+<script src="js/main.js?v=c2"></script>
+<script src="js/verify.js?v=c2"></script>
 </body>
 </html>

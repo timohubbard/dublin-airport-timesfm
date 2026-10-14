@@ -24,9 +24,10 @@ function landsideReset() {
   sim.carparks = {};
   for (const [id, cp] of Object.entries(CARPARKS)) {
     if (id === 'rental') continue;
-    const cap = CARPARK_CAP[id] || 1000;
+    const lost = typeof shocks === 'function' ? shocks('carpark_closed').filter(s => s.target === id).reduce((a, s) => Math.max(a, s.magnitude), 0) : 0;
+    const cap = Math.max(1, Math.round((CARPARK_CAP[id] || 1000) * (1 - lost)));
     const occ0 = cps && cps[id] ? cps[id].occ0 : Math.round(cap * ({ cpa_t1: 0.55, surf_t2: 0.5, dropgo: 0.05, staff: 0.18, hb: 0.75, st_t1: 0.35, st_t2: 0.3 }[id] || 0.3));
-    sim.carparks[id] = { id, name: cp.name, cap, occ: occ0, occ0, in: 0, out: 0, turned: 0 };
+    sim.carparks[id] = { id, name: cp.name, cap, occ: Math.min(occ0, cap), occ0: Math.min(occ0, cap), in: 0, out: 0, turned: 0 };
   }
   sim.taxi = { holding: 60, q: { t1: new Queue(), t2: new Queue() }, supplied: 0, rejoined: 0, out: 0, waitSum: 0, waits: 0, peakWait: 0, idleSum: 0 };
   sim.stops = { bus: { t1: [], t2: [] }, hb: { t1: [], t2: [] }, rental: { t1: [], t2: [] } };
@@ -282,7 +283,7 @@ function taxiDispatch(t) {
       T.surge[k] = T.surge[k] ? ql > TAXI.surgeOff : ql > TAXI.surgeOn;
       rate += plans.taxi[k][slotOf(T.nextSupply)] * (T.surge[k] ? TAXI.surgeX : 1);
     }
-    const perMin = rate * taxiSupplyFactor() / 30;
+    const perMin = rate * taxiSupplyFactor(t) / 30;
     // Only call taxis in while the holding area has room.
     if (perMin > 0 && T.holding + (T.inbound || 0) < TAXI.holdingCap) {
       const west = R() < 0.5;

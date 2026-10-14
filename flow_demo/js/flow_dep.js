@@ -63,7 +63,8 @@ function routeToGate(a, G) {
   const pts = [];
   if (a.pre) pts.push({ x: G.preclear.door.x + 8, y: G.preclear.door.y + jit(6) });
   pts.push({ x: p.entry.x + jit(5), y: p.entry.y + jit(2), k: p.kEntry }, { x: p.root.x + jit(3), y: p.root.y + jit(3), k: p.k });
-  for (const q of g.route) pts.push({ x: q.x + jit(2), y: q.y + jit(2), k: q.k });
+  const wf = walkFactor(g.pier, sim.t);
+  for (const q of g.route) pts.push({ x: q.x + jit(2), y: q.y + jit(2), k: (q.k || 1) * wf });
   pts.push(randIn(g.hold, 1));
   return pts;
 }
@@ -113,6 +114,7 @@ defStage('D_TO_SEC', Z.LAND, 'To security', (a, dt, t) => {
   const ts = sim.ts[a.term];
   a.inFt = a.ft; (a.ft ? ts.ftQ : ts.secQ).push(a); a.qJoin = t; a.stage = ST.D_SEC_Q;
   sim.obs.sec[a.term][hourOfT(t)]++;
+  if (a.f.dep - t < 45 * 60) sim.lateAtSec = (sim.lateAtSec || 0) + 1;
 });
 defStage('D_SEC_Q', Z.SEC, 'Security queue', (a, dt, t) => {
   checkMissed(a, t);

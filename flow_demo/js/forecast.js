@@ -44,8 +44,10 @@ const SCENARIO_DEFS = {
 const EVENT_LIFT_SCN = { eu_city: 0.14, uk: 0.10, eu_sun: 0.04, na: 0.06, long: 0.03 };
 const scenarioActive = k => SCN.kind === k;
 const scnTold = () => SCN.kind && SCENARIO_DEFS[SCN.kind].demand && SCN.told;
-const maxLanesOf = key => GEO[key].maxLanes - (SCN.kind === 'lanes' && key === 't1' ? 3 : 0);
-const taxiSupplyFactor = () => (SCN.kind === 'taxi' ? 0.75 : 1);
+/* Lanes available: t omitted gives what the roster can plan with; with t,
+   what is physically open (a custom scenario's failures). */
+const maxLanesOf = (key, t) => Math.max(0, GEO[key].maxLanes - (SCN.kind === 'lanes' && key === 't1' ? 3 : 0) - (typeof lanesLost === 'function' ? lanesLost(key, t) : 0));
+const taxiSupplyFactor = (t, key) => (SCN.kind === 'taxi' ? 0.75 : 1) * (t != null && typeof shockMag === 'function' ? 1 - clamp(shockMag('taxi_shortage', key, t) + Math.min(0.4, roadDelayAt(key, t) / 150), 0, 0.95) : 1);
 
 /* Which forecast the covariate rosters use: the 28-day plan made on 1 March,
    or the refresh made the evening before each day (latest passengers and the
@@ -56,16 +58,15 @@ function planValue(node, planKey) {
   if (!node) return 0;
   if (planKey === 'hist') return node.univariate ?? (node.plan ? node.plan.hist : 0);
   const li = planLevelIndex(planKey);
-  if (useDayAhead(node)) return node.da.q[li] * (scnTold() && node.scen && node.scen[SCN.kind] != null ? node.scen[SCN.kind] : 1);
+  if (useDayAhead(node)) return node.da.q[li] * scnFactor(node);
   let v = node.q ? node.q[li] : li === 9 ? (node.plan ? node.plan.p90 : node.q90) : (node.plan ? node.plan.tfm : node.joint_with_covariates);
-  if (scnTold() && node.scen && node.scen[SCN.kind] != null) v *= node.scen[SCN.kind];
-  return v;
+  return v * scnFactor(node);
 }
 /* Forecast quantile row for a node: model 'cov' or 'uni', scenario-aware. */
 function nodeQ(node, model = 'cov') {
   const q = model === 'uni' ? node.uq : useDayAhead(node) ? node.da.q : node.q;
   if (!q) return null;
-  const f = model === 'cov' && scnTold() && node.scen ? node.scen[SCN.kind] ?? 1 : 1;
+  const f = model === 'cov' ? scnFactor(node) : 1;
   return q.map(v => v * f);
 }
 
@@ -74,6 +75,7 @@ function scenarioDay(di) {
   const base = DATA.days[di];
   if (!SCN.kind) return base;
   const d = JSON.parse(JSON.stringify(base));
+  if (SCN.kind === 'custom') { if (SCN.custom) customDay(d); d._scenario = 'custom'; return d; }
   const scaleNode = (n, f) => { if (!n) return; n.actual = Math.round(n.actual * f); };
   const ratio = { t1: 1, t2: 1 };
   if (SCN.kind === 'event' || SCN.kind === 'cancel' || SCN.kind === 'fog' || SCN.kind === 'storm') {

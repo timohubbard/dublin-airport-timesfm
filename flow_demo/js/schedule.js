@@ -33,12 +33,15 @@ function marketsFor(day, key) {
   return out;
 }
 
-const genKey = di => di + '|' + (SCN.kind || '');
+const genKey = di => di + '|' + scnKey();
 function genDay(di) {
   const ck = genKey(di);
   if (genCache.has(ck)) return genCache.get(ck);
   const day = scenarioDay(di);
-  const rnd = mulberry32(hashStr(day.date));
+  // Separate seeded streams per terminal, phase and flight: a scenario that
+  // removes or changes one thing leaves every other draw of the day as it was.
+  let rnd = mulberry32(hashStr(day.date));
+  const reseed = tag => { rnd = mulberry32(hashStr(day.date + '|' + tag)); };
   const gauss = () => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
   const pick = list => list[Math.floor(rnd() * list.length)];
   const pickWr = w => pickW(w, rnd());
@@ -58,13 +61,15 @@ function genDay(di) {
   let fid = 0;
 
   for (const key of TERMS) {
+    // T1's timetable keeps the day's original stream (so each day's flights are as before); T2 has its own.
+    if (key === 't1') rnd = mulberry32(hashStr(day.date)); else reseed(key + '|flights');
     const G = GEO[key], mk = marketsFor(day, key);
     out.mk[key] = mk; out.secArr[key] = hist(); out.secArrM[key] = {}; out.totalM[key] = {};
     out.immArr[key] = { eu: hist(), non: hist(), egate: hist() }; out.immArrM[key] = {}; out.immTotM[key] = {};
     out.taxiArr[key] = hist(); out.taxiDrop[key] = hist();
 
     /* ---- departures and their inbound rotations ---- */
-    const deps = [];
+    let deps = [];
     for (const m of TERMINAL_MARKETS[key]) {
       const md = mk[m], meta = MARKETS[m], wsum = meta.depW.reduce((x, y) => x + y, 0);
       const nF = Math.max(1, Math.round(md.movements / 2 * keepShare));
@@ -78,11 +83,13 @@ function genDay(di) {
       }
     }
     deps.sort((a, b) => a.std - b.std);
+    deps = customCancelFlights(key, deps, rnd);
     // The transatlantic inbound bank lands between 04:45 and 09:45, spread rather than clumped.
     const naDeps = deps.filter(f => f.market === 'na');
     naDeps.forEach((f, i) => { f._naSta = (4.75 + 5 * (i + 0.15 + rnd() * 0.7) / naDeps.length) * 3600; });
     const arrs = [];
     for (const f of deps) {
+      reseed(key + '|turn|' + f.id);
       const meta = MARKETS[f.market];
       const firstWave = f.std < 8.5 * 3600 && f.market !== 'na' && f.market !== 'long';
       let sta = null;
@@ -99,7 +106,7 @@ function genDay(di) {
         const minTurn = (meta.long ? 75 : f.airline === 'R' ? 25 : 35) * 60;
         f.dep = Math.max(f.std + ownDelay, onBlock + minTurn);
         f.delay = f.dep - f.std;
-        const a = { id: fid++, kind: 'arr', term: key, market: f.market, origin: f.dest, code: f.code, ac: f.ac, seats: f.seats, wide: f.wide, us: f.us,
+        const a = { id: f.id + 50000, kind: 'arr', term: key, market: f.market, origin: f.dest, code: f.code, ac: f.ac, seats: f.seats, wide: f.wide, us: f.us,
           sta, delay: aDelay, onBlock, airline: f.airline, pax: 0, transfers: 0, out: f, deplaned: 0, bags: 0, bagsClaimed: 0, firstBag: 0, lastBag: 0 };
         f.inbound = a;
         arrs.push(a);
@@ -109,15 +116,18 @@ function genDay(di) {
         const nsta = Math.round((21 + rnd() * 3.5) * 3600 / 300) * 300, aDelay = delayOf();
         const nmeta = MARKETS[f.market];
         const origin = pick(nmeta.dests);
-        arrs.push({ id: fid++, kind: 'arr', term: key, market: f.market, origin: origin[0], code: origin[1], ac: f.ac, seats: f.seats, wide: f.wide, us: false,
+        arrs.push({ id: f.id + 60000, kind: 'arr', term: key, market: f.market, origin: origin[0], code: origin[1], ac: f.ac, seats: f.seats, wide: f.wide, us: false,
           sta: nsta, delay: aDelay, onBlock: nsta + aDelay, airline: f.airline, pax: 0, transfers: 0, out: null, nightStop: true, deplaned: 0, bags: 0, bagsClaimed: 0, firstBag: 0, lastBag: 0 });
       }
     }
     arrs.sort((a, b) => a.onBlock - b.onBlock);
     deps.forEach((f, i) => { f.no = (key === 't1' ? 1000 : 2000) + ((i * 37) % 900) + 11; });
     arrs.forEach((a, i) => { a.no = (key === 't1' ? 1000 : 2000) + ((i * 53 + 7) % 900) + 11; });
+    customDelays(key, deps, arrs);
+    reseed(key + '|weather');
     const wx = applyWeather(day, deps, arrs, rnd, (day[key].movements || 1) / mvTotal);
     if (wx) { out.wxHeld = (out.wxHeld || 0) + wx.held; out.wxMaxHold = Math.max(out.wxMaxHold || 0, wx.maxHold); out.wxHourly = wx.hourly; out.deiced = (out.deiced || 0) + deps.filter(f => f.deiced).length; }
+    reseed(key + '|gates');
     assignGates(G, deps, arrs, rnd, out);
 
     /* ---- passengers per flight ---- */
@@ -142,6 +152,7 @@ function genDay(di) {
 
     /* ---- departing parties ---- */
     for (const f of deps) {
+      reseed(key + '|dep|' + f.id);
       const meta = MARKETS[f.market], md = mk[f.market], mix = md.mix || DEFAULT_MIX;
       const hr = Math.floor(f.std / 3600);
       const tilt = { business: (hr <= 8 || (hr >= 17 && hr <= 19)) ? 1.4 : 0.75, family: (hr >= 8 && hr <= 14) ? 1.2 : 0.9 };
@@ -160,8 +171,11 @@ function genDay(di) {
         lead = clamp(lead, 40, 290);
         let spawn = f.std - lead * 60;
         if (spawn < OPEN[key] - 600) spawn = OPEN[key] - 600 + rnd() * 1500;
-        const mode = pickWr(modeSplit(pk, md.rs));
+        const mode = pickWr(strikeSplit(modeSplit(pk, md.rs), key, spawn));
         const via = mode === 'met' ? (rnd() < 0.1 ? 'dropgo' : 'kerb') : mode === 'taxi' ? 'taxi' : mode === 'bus' ? 'bus' : mode === 'short_term' ? 'st' : mode === 'holiday_blue' ? 'hb' : 'rental';
+        // Congestion on the roads in: everyone comes by road, some later than others.
+        // (Hashed, not drawn: the day's other random draws stay the same with or without it.)
+        const late = roadDelayAt(key, spawn); if (late) spawn += late * (0.5 + hashStr(key + out.depParties.length) / 4294967296);
         const bags = chk ? bagCount(pk, size, meta.long, rnd) : 0;
         const v = pm.speed * (0.9 + rnd() * 0.2);
         const call = callTime(f, pm, v, gauss);
@@ -183,6 +197,7 @@ function genDay(di) {
 
     /* ---- arriving parties, transfers and greeters ---- */
     for (const a of arrs) {
+      reseed(key + '|arr|' + a.id);
       const meta = MARKETS[a.market], md = mk[a.market], mix = md.mix || DEFAULT_MIX;
       const w = PERSONA_KEYS.map(p => (mix[p] || 0) / ((PERSONAS[p].size[0] + PERSONAS[p].size[1]) / 2));
       const wsum = w.reduce((x, y) => x + y, 0);
@@ -211,8 +226,8 @@ function genDay(di) {
           }
         }
         let ch = rnd() < meta.nonEU ? 'non' : (pk !== 'family' && pk !== 'prm' && rnd() < meta.egate) ? 'egate' : 'eu';
-        if (ch === 'egate' && day._scenario === 'egate') ch = 'eu';
-        const mode = pickWr(rainyAt(day, leaveAt) ? wetModeSplit(modeSplit(pk, md.rs)) : modeSplit(pk, md.rs));
+        if (ch === 'egate' && (day._scenario === 'egate' || egatesDown(key, leaveAt + 600))) ch = 'eu';
+        const mode = pickWr(strikeSplit(rainyAt(day, leaveAt) ? wetModeSplit(modeSplit(pk, md.rs)) : modeSplit(pk, md.rs), key, leaveAt));
         const met = mode === 'met';
         const bags = bagCount(pk, size, meta.long, rnd, true);
         const immAt = leaveAt + pathLen / v;
@@ -241,6 +256,7 @@ function genDay(di) {
   }
 
   /* ---- staff ---- */
+  reseed('staff');
   const staffCounts = day.staff || { early: 1700, mid: 1300, late: 1450, night: 280 };
   for (const [shift, n] of Object.entries(staffCounts)) {
     const sh = SHIFTS[shift], count = Math.round(n * STAFF.sample);
@@ -302,7 +318,7 @@ function assignGates(G, deps, arrs, rnd, out) {
   const busy = new Map(G.gates.map(g => [g, []]));
   out.remoteBusy = out.remoteBusy || new Map(REMOTE_STANDS.map(r => [r.id, []]));
   const book = g => (g.remote ? out.remoteBusy.get(g.stand) : busy.get(g));
-  const free = (g, a, b) => book(g).every(([x, y]) => b <= x || a >= y);
+  const free = (g, a, b) => !pierClosed(g, a, b) && book(g).every(([x, y]) => b <= x || a >= y);
   const stays = [];
   for (const f of deps) {
     const a = f.inbound;

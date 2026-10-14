@@ -18,6 +18,9 @@ A forecasting system for a **synthetic** Dublin Airport, built on [TimesFM 3](ht
 | **Explain** | Exact Shapley values of the covariate groups (schedule, events, calendar, weather), from 8 or 16 TimesFM runs per family. |
 | **Weather** | Disruption risk from ECMWF IFS (physics) and ECMWF AIFS (AI), scored against climatology. The weather forecast is used in TimesFM only when its own risk model flags a day. |
 | **Ask what if** | TimesFM re-forecasts the day if an event is announced, 10% of flights are cancelled, or a route is added. Fog and storm scenarios run through the runway model. |
+| **Describe what happened** | Type a scenario in words ("three T1 lanes fail at 7am", "fog until 10", "a crash on the M1"). It becomes the twin's shocks (Claude interprets it if `scenario_server.py` is running, a built-in parser if not). The day then runs with and without them, and the twin shows where the effect appears first and how it spreads through the airport. |
+| **Three horizons** | The 28-day plan, the evening-before refresh for the week ahead, and an hour-by-hour forecast for today that updates live (a nowcast) as passengers arrive. |
+| **Real layout** | Piers, gates, stands and walking distances from OpenStreetMap. Passengers allow for the walk to far gates, and the twin draws a true-to-scale map of Dublin with the live aircraft and people on it. |
 | **Decide** | The twin rosters security, passport control, taxis and shuttles from any forecast quantile. It shows each roster's cost against its risk before the day, then what actually happened. |
 
 ## Results
@@ -141,6 +144,8 @@ The synthetic daily series are scaled with smooth monthly factors so that every 
 
 The split between terminals (Europe city and UK 55/45 across T1/T2; sun routes all T1; North America and long-haul all T2) is the demo's assumption, not daa's allocation.
 
+The airport layout comes from [OpenStreetMap](https://www.openstreetmap.org/copyright) (ODbL), cached in `reference_data/osm/` by `airport_geometry.py`: the real gates (102-119, 201-224, 301-307A, 332-337, 401-426, the South Gates), the stands they serve, terminals, aprons, taxiways, runways and car parks. Pier centrelines and security exits are traced by hand; see `reference_data/SOURCES.md`.
+
 The rolling 12-month total to June 2026 is 37.4 million passengers. It is shown against the 32 million passenger cap in the 2007 Terminal 2 planning permission, as a reference line only; that cap has been the subject of ongoing planning and legal proceedings.
 
 ## Run
@@ -194,15 +199,18 @@ TimesFM 3 weights are under the [TimesFM Non-Commercial License v1.0](https://hu
 | `calibration.py` | Conformal bands (normalised CQR; Mondrian by event and weather-risk day; online in the backtest) |
 | `reconcile.py` | MinT with Schäfer–Strimmer shrinkage |
 | `forecast_eval.py`, `forecast_final.py`, `run_all.py` | Backtest, production forecast, orchestration |
+| `airport_geometry.py` | Real piers, gates, stands and walking distances from OpenStreetMap; writes `flow_demo/js/airport_geo.js` |
+| `scenario_server.py` | Serves the twin; Claude interprets scenarios and writes the impact briefing (optional) |
 | `flow_demo/` | The operations twin (below) |
 
 ## Operations twin (`flow_demo/`)
 
 ```bash
 python -m http.server 8765 --directory flow_demo   # then open http://localhost:8765
+python scenario_server.py                          # the same, plus Claude for scenarios: http://localhost:8770
 ```
 
-You can also open `flow_demo/index.html` straight from disk; there is no build step.
+You can also open `flow_demo/index.html` straight from disk; there is no build step. `scenario_server.py` needs `pip install anthropic` and an Anthropic API key (`ANTHROPIC_API_KEY` or an `ant auth login` profile). The key stays on the server. Without it, the twin uses its built-in parser.
 
 Each dot is one person:
 
@@ -210,7 +218,14 @@ Each dot is one person:
 - connecting passengers, meeters and greeters, and staff are dots too
 - cars, taxis, buses, shuttles, tugs and bags move on their own networks
 
-The map is one schematic stacked by level: piers and gates, departures, roads, arrivals, the baggage hall and car parks. Outlet, lounge, carousel and car-park names come from daa's public terminal map; their capacities and all spend figures are illustrative.
+The map stacks the terminals by level: departures, roads, arrivals, the baggage hall and car parks. The terminal blocks are schematic. The airside above them is real: every pier, gate and contact stand comes from OpenStreetMap at true scale. The view is turned so real west is up, which puts T2's Pier 4 on the left and T1's Piers 1–3 on the right. Remote stands (the South Gates, West and North Aprons) sit in a block at the west edge, not to scale, with real bus times. Outlet, lounge, carousel and car-park names come from daa's public terminal map; their capacities and all spend figures are illustrative.
+
+**Walking distances.** The walk from security to each gate follows the real pier. In the twin it is within about 5% of the OpenStreetMap distance: 580–890 m to Pier 1 (8–12 minutes at 1.25 m/s), 280–420 m to Pier 2, about 200 m to Pier 3, and 130–500 m to Pier 4. Where the schematic draws a leg longer or shorter than it really is (inside the terminals, the T1–T2 link), walking speed on that leg is scaled so the time stays real.
+- **Gate call times:** passengers leave the lounge earlier for a far gate, as the airport's screens advise. Remote stands board earlier by the length of the bus ride, and arriving passengers from remote stands reach passport control later by the same amount.
+- **Arrivals:** they walk back along the real pier, so a Pier 1 arrival reaches passport control minutes after a Pier 3 one.
+- **Departures tab:** a **Walk to the gate** table shows metres and minutes per pier, for an average traveller and for reduced mobility (0.6 m/s), with today's flights and missed flights per pier. The follow card gives each passenger's walk at their own pace.
+
+**Real map** (key **S**): Dublin Airport north up and to scale, from OpenStreetMap: runways, taxiways, aprons, stand lines, terminals, piers and gates. Aircraft sit on their real stands, contact and remote. People on the piers and at the gates are drawn where they really are, because the twin's piers are the real ones turned. People inside the terminals are placed in each main hall's real footprint, with both levels sharing it, so those positions are approximate.
 
 **Forecast Studio** (key **F**):
 
@@ -218,6 +233,21 @@ The map is one schematic stacked by level: piers and gates, departures, roads, a
 - The week-ahead track record over the backtest year.
 - The leaderboard with bootstrap intervals and the reliability diagram.
 - The Shapley "why" for the selected day, with the scenario re-forecasts.
+- **Week ahead:** the next seven days from the 1 March plan against the refresh made each evening, with the actual (the refresh's 80% band is narrower).
+- **Today, hour by hour:** departing passengers reaching security, or arrivals reaching passport control.
+  - **How it is built:** the TimesFM daily forecast spread over the day by the published timetable, flight by flight, using each traveller type's show-up pattern before departure (or the scheduled arrival, a typical delay, taxi-in, deplaning and the walk).
+  - **Bands:** the daily band combined with the hourly shape's error, measured leave-one-out on the other 27 days.
+  - **Live nowcast:** as the day plays, what has arrived so far updates the day's total (normal-normal on the log scale), and the bands for the hours still to come narrow. For passport control the nowcast uses actual landing times, which the airport knows live.
+  - **On the bottom timeline:** the same nowcast band, per quarter hour.
+  - **Backtest over March** (each day calibrated on the other 27), rest-of-day error before → after the nowcast, plan made 1 March:
+
+    | Cut | Security | Passport control |
+    | --- | --- | --- |
+    | 08:00 | 6.0% → **3.6%** | 4.5% → 4.6% (too few flights have landed) |
+    | 12:00 | 6.5% → **3.2%** | 4.5% → **3.5%** |
+    | 16:00 | 6.3% → **4.3%** | 5.0% → **3.5%** |
+
+    Hourly 80% bands held 89% of terminal-hours at security and 86% at passport control (slightly cautious). The nowcast starts once 10% of the expected day has arrived.
 - The CSO data behind the history.
 
 **Roster & risk:**
@@ -228,7 +258,26 @@ The map is one schematic stacked by level: piers and gates, departures, roads, a
 - **Alerts** list the windows that break the service level if demand lands on P90. One click adds the lanes or booths that fix them.
 - The **outlook table** compares every roster on the actual day: peak wait, share within the service level, and staff-hours.
 
-**What if** (applies to the selected day):
+**Describe what happened** (the What if tab; key **I** reopens the impact view):
+
+- **Shocks:** the text becomes a list of shocks, each with a type, a terminal, a time window and a size. There are 19 types:
+  - **Security and check-in:** lanes out, screener shortage, power cut or evacuation, check-in system outage.
+  - **Baggage and passport control:** baggage-screening failure, passport-officer shortage, eGates down.
+  - **Runway and flights:** runway capacity, fog/storm/snow, flight delays, cancellations (by market or airline), demand changes, extra flights.
+  - **Landside:** road congestion, bus strike, taxi shortage, car park closed.
+  - **Piers:** pier closed, travelators out.
+  - Every shock can be edited (hours, size) or removed, then re-run.
+- **Interpreter:** Claude (`claude-opus-5-5`, structured output against the same schema) when `scenario_server.py` is running; otherwise a rule-based parser. Claude only sets the direct shocks; it never invents knock-on effects.
+- **The knock-on effects are simulated, not scripted.** The shocks are wired into the twin itself, so a lane failure becomes a queue, then missed flights, then less time and money spent airside. Fog becomes runway holding, then more aircraft on remote stands, a later passport-control peak, busier reclaim and a later taxi rush.
+- **Impact view:** the day runs twice under the same roster, without and with the scenario, using common random numbers. Generation uses separate seeded streams per terminal, phase and flight, so nothing changes until the scenario does. Each part of the airport is measured every quarter hour. The view shows:
+  - a ripple diagram, numbered in the order the effect reached each part, with a time scrubber;
+  - a heat strip of the change through the day;
+  - the day's KPIs with and without the scenario;
+  - a briefing (Claude's, from the measured numbers, or a template);
+  - the hourly forecast with and without the scenario.
+- **The forecast, when told:** cancellations and added flights scale TimesFM's own re-forecasts (10% cancelled; +6 movements); demand changes apply the stated change. The URL keeps the scenario text, so a view can be shared.
+
+**Or pick a what-if** (applies to the selected day):
 
 - **Demand scenarios:** announce an event, cancel 10% of flights, add a route. "Tell the forecast" scales the covariate rosters by TimesFM's own re-forecast; the history-only model cannot be told.
 - **Capacity scenarios:** low visibility 06–11h, a storm with a red warning (both through the runway model), three T1 lanes out, eGates down, taxi shortage.
@@ -245,7 +294,8 @@ The map is one schematic stacked by level: piers and gates, departures, roads, a
 | Space, ← → | Play/pause; jump 15 minutes |
 | 1 2 3, [ ] | Roster preset; risk appetite down or up |
 | W D A L B | Camera: whole, departures, arrivals, landside, baggage |
-| F, T, R, ? | Forecast Studio, tour, briefing, help |
+| S | Real map (OpenStreetMap, north up, to scale) |
+| F, T, R, I, ? | Forecast Studio, tour, briefing, scenario impact, help |
 | C, P | Dot colours, performance meter |
 | Click | Follow a person (Esc to stop) |
 
@@ -253,11 +303,11 @@ The map is one schematic stacked by level: piers and gates, departures, roads, a
 
 | Roster | Missed flights | Mean daily security peak | Worst taxi-rank wait |
 | --- | --- | --- | --- |
-| History only | 445 | 12.9 min | 108 min |
-| Covariates P50 | 250 | 5.0 min | 58 min |
-| Covariates P90 | 192 | 4.4 min | 11 min |
+| History only | 855 | 14.2 min | 113 min |
+| Covariates P50 | 407 | 5.5 min | 80 min |
+| Covariates P90 | 329 | 4.4 min | 15 min |
 
-Under the P50 and P90 rosters every missed flight falls on 27 March, the Friday the Easter school holidays start, when T1 security is short of lanes under any roster. That is a capacity problem, not a forecasting one. History only also misses 74 on 5 March (summit departures).
+Most missed flights under every roster fall on 27 March, the Friday the Easter school holidays start: 689, 388 and 322. T1's first wave is capacity-bound under any roster, and the real walk makes it worse. Under P50, 228 of the 388 were bound for Pier 1, 600–900 m from security, so a 23-minute queue plus a 10-minute walk misses a 06:00 boarding close that the queue alone would have made. That is a capacity (and layout) problem, not a forecasting one. History only also misses 161 on 5 March (summit departures). These figures changed with the real piers and walking times. Day generation now gives each terminal, phase and flight its own seeded stream (T1 keeps each day's original timetable), so individual days differ slightly from earlier versions.
 
 **Verification** (browser console):
 

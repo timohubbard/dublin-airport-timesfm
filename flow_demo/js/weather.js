@@ -41,13 +41,14 @@ function hourlyWx(day, source = 'obs') {
   // Scenario overrides.
   if (day._scenario === 'fog') for (let h = 6; h <= 11; h++) Object.assign(H[h], { vis: 300, lvp: true });
   if (day._scenario === 'storm') for (let h = 5; h <= 15; h++) Object.assign(H[h], { gust: h >= 7 && h <= 11 ? 62 : 48, wind: 34, rain: 3 });
+  if (source === 'obs') shockWeather(H);
   return H;
 }
 function runwayRate(o) {
-  if (o.gust >= RUNWAY.stormGust) return RUNWAY.storm;
+  if (o.gust >= RUNWAY.stormGust) return RUNWAY.storm * (o.rateF ?? 1);
   let r = o.lvp ? RUNWAY.lvp : RUNWAY.normal;
   if (o.gust >= RUNWAY.crosswindGust) r *= RUNWAY.crosswindFactor;
-  return r;
+  return r * (o.rateF ?? 1);
 }
 function runwayConfig(o) {
   if (o.gust >= RUNWAY.stormGust) return 'Storm: one runway, heavy restrictions';
@@ -80,7 +81,7 @@ function applyWeather(day, flights, arrs, rnd, share = 0.5) {
   // De-icing on frosty or snowy hours.
   for (const f of flights) {
     const o = H[clamp(Math.floor(f.dep / 3600), 0, 25)];
-    if (o.temp <= DEICE.frostC || (day.weather.obs.snow && o.temp <= 2)) {
+    if (o.temp <= DEICE.frostC || ((day.weather.obs.snow || o.snow) && o.temp <= 2)) {
       const add = (DEICE.min[0] + rnd() * (DEICE.min[1] - DEICE.min[0])) * 60;
       f.dep += add; f.delay += add; f.deiced = true;
     }

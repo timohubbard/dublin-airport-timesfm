@@ -98,10 +98,10 @@ function toggleHelp() {
   el.innerHTML = `<div class="mbox glass"><div class="mh"><b>DUB Operations Twin</b><button aria-label="Close help" id="helpClose">×</button></div>
     <p>A whole-airport simulation rostered from TimesFM 3 forecasts. The people follow the day's <b>actual</b> (synthetic) demand; security lanes, passport booths, taxi call-ins and shuttles follow the <b>forecast</b> you choose. Monthly totals and market mix are calibrated to CSO statistics; everything operational is illustrative.</p>
     <div class="hgrid"><div>
-      <h4>Watch</h4>${row('Space', 'Play / pause')}${row('← →', 'Back / forward 15 min')}${row('W D A L B', 'Whole · Departures · Arrivals · Landside · Baggage')}${row('C', 'Cycle dot colours')}${row('Click', 'Follow a person; Esc to stop')}${row('Scroll / drag', 'Zoom / pan; double-click to fit')}
-      <h4>Present</h4>${row('T', 'Guided tour (about 4 minutes)')}${row('F', 'Forecast Studio')}${row('R', 'Daily ops briefing')}${row('P', 'Performance meter')}
+      <h4>Watch</h4>${row('Space', 'Play / pause')}${row('← →', 'Back / forward 15 min')}${row('W D A L B', 'Whole · Departures · Arrivals · Landside · Baggage')}${row('S', 'Real map: Dublin as it is, from OpenStreetMap')}${row('C', 'Cycle dot colours')}${row('Click', 'Follow a person; Esc to stop')}${row('Scroll / drag', 'Zoom / pan; double-click to fit')}
+      <h4>Present</h4>${row('T', 'Guided tour (about 4 minutes)')}${row('F', 'Forecast Studio')}${row('R', 'Daily ops briefing')}${row('I', 'Scenario impact: how the last “what happened” rippled')}${row('P', 'Performance meter')}
     </div><div>
-      <h4>Plan</h4>${row('1 2 3', 'Roster from history only · covariates P50 · P90')}${row('[ ]', 'Risk appetite down / up (P50 … P95)')}
+      <h4>Plan</h4>${row('1 2 3', 'Roster from history only · covariates P50 · P90')}${row('[ ]', 'Risk appetite down / up (P50 … P95)')}<div class="hk"><kbd>What if</kbd><span>Describe what happened in words; the twin runs the day with and without it</span></div>
       <h4>Colours</h4>
       <div class="hk"><span class="err g">+2%</span><span>forecast error under 5%</span></div>
       <div class="hk"><span class="err w">+8%</span><span>5 to 12%</span></div>

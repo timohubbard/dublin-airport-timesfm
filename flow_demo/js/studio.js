@@ -39,6 +39,7 @@ function closeOverlays() {
   if (studioOpen()) { $('studio').classList.remove('show'); closed = true; }
   if ($('help').classList.contains('show')) { $('help').classList.remove('show'); closed = true; }
   if ($('brief').classList.contains('show')) { $('brief').classList.remove('show'); closed = true; }
+  if (impactOpen()) { showImpact(false); closed = true; }
   return closed;
 }
 
@@ -165,8 +166,8 @@ function drawFan(S) {
   line(B.days.map(n => n.univariate), 0, '#fb923c', 1.4, [4, 3]);
   line(B.days.map(n => n.joint_with_covariates), 0, '#2dd4bf', 2);
   // Scenario re-forecast on the selected day.
-  if (scnTold() && B.days[state.di].scen) {
-    const n = B.days[state.di], v = n.joint_with_covariates * n.scen[SCN.kind];
+  if (scnTold() && (B.days[state.di].scen || SCN.kind === 'custom')) {
+    const n = B.days[state.di], v = n.joint_with_covariates * scnFactor(n);
     g.fillStyle = '#f472b6'; g.beginPath(); g.moveTo(X(state.di), Y(v) - 5); g.lineTo(X(state.di) + 5, Y(v)); g.lineTo(X(state.di), Y(v) + 5); g.lineTo(X(state.di) - 5, Y(v)); g.closePath(); g.fill();
   }
   // Actuals: revealed up to the selected day unless "show all".
